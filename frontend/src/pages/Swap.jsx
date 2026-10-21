@@ -11,7 +11,6 @@ const PRICE_CHANGE_TOAST_THRESHOLD = 0.005; // 0.5%
 const SLIPPAGE_PRESETS = [0.1, 0.5, 1.0];
 const DEFAULT_SLIPPAGE = 0.5;
 const MAX_SLIPPAGE = 5;
-const SLIPPAGE_STORAGE_KEY = 'afripay_slippage'; // shared with SendMoney
 // Single app-wide slippage preference shared by Swap and Send Money.
 const SLIPPAGE_STORAGE_KEY = 'afripay_slippage';
 
@@ -215,7 +214,6 @@ export default function Swap() {
         buy_asset: buyAsset,
         // Backend honours slippage_pct; min_received kept for BE-139 forward-compat.
         slippage_pct: slippage,
-        min_received: minReceived ? parseFloat(minReceived) : undefined,
         min_received: minReceived || undefined,
       });
       setResult(res.data);
@@ -264,9 +262,6 @@ export default function Swap() {
             <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-3 z-20 space-y-2">
               <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Slippage tolerance</p>
               <div className="flex gap-2">
-            <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-3 z-10">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Slippage tolerance</p>
-              <div className="flex gap-2 mb-2">
                 {SLIPPAGE_PRESETS.map((preset) => (
                   <button
                     key={preset}
@@ -276,10 +271,6 @@ export default function Swap() {
                       slippage === preset
                         ? 'bg-primary-500 text-white'
                         : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                    className={`flex-1 py-1 rounded-lg text-xs font-medium transition-colors ${
-                      slippage === preset
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
                     }`}
                   >
                     {preset}%
@@ -310,20 +301,6 @@ export default function Swap() {
                   <AlertTriangle size={12} /> High slippage tolerance
                 </p>
               )}
-              <input
-                type="number"
-                step="0.1"
-                min="0.01"
-                max={MAX_SLIPPAGE}
-                value={customSlippage}
-                onChange={(e) => setCustomSlippage(e.target.value)}
-                onBlur={() => {
-                  if (customSlippage) applySlippage(customSlippage);
-                  setCustomSlippage('');
-                }}
-                placeholder="Custom %"
-                className="w-full px-2 py-1 text-xs rounded-lg border border-gray-200 dark:border-gray-600 bg-transparent text-gray-900 dark:text-white"
-              />
             </div>
           )}
         </div>
@@ -331,16 +308,6 @@ export default function Swap() {
 
       <form onSubmit={handleSwap} className="space-y-4">
         {/* Sell */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-          <label className="text-xs text-gray-500 dark:text-gray-400">You pay</label>
-          <div className="flex items-center gap-2 mt-1">
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={sellAmount}
-              onChange={(e) => setSellAmount(e.target.value)}
-              placeholder="0.00"
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
           <label className="text-xs text-gray-500 dark:text-gray-400">You sell</label>
           <div className="flex gap-2">
@@ -356,7 +323,6 @@ export default function Swap() {
               value={sellAsset}
               onChange={(e) => setSellAsset(e.target.value)}
               className="bg-gray-100 dark:bg-gray-700 rounded-lg px-2 py-1 text-sm text-gray-900 dark:text-white outline-none"
-              className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-transparent text-sm text-gray-900 dark:text-white"
             >
               <option value="XLM">XLM</option>
               <option value="USDC">USDC</option>
@@ -372,7 +338,6 @@ export default function Swap() {
             type="button"
             onClick={flipPair}
             className="p-2 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-primary-500 transition-colors"
-            className="p-2 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
             aria-label="Flip pair"
           >
             <ArrowUpDown size={16} />
@@ -430,27 +395,6 @@ export default function Swap() {
         )}
 
         {highImpact && (
-          <div className="flex items-start gap-2 text-xs text-amber-500 bg-amber-500/10 rounded-xl p-3">
-            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-            <span>High price impact. You may receive significantly less than quoted.</span>
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-          <label className="text-xs text-gray-500 dark:text-gray-400">You receive (estimated)</label>
-          <div className="flex gap-2 items-center">
-            <span className="flex-1 text-2xl font-semibold text-gray-900 dark:text-white">
-              {quoteLoading ? '…' : quote?.estimatedReceived || '0.0000000'}
-            </span>
-            <span className="px-2 py-1 rounded-lg border border-gray-200 dark:border-gray-600 text-sm text-gray-900 dark:text-white">
-              {buyAsset}
-            </span>
-          </div>
-          {minReceived && (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Minimum received: {minReceived} {buyAsset}
-            </p>
-          )}
-        </div>
-
-        {highImpact && (
           <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>High price impact ({quote.priceImpactPct.toFixed(2)}%). You may receive significantly less than estimated.</span>
@@ -459,10 +403,8 @@ export default function Swap() {
 
         <button
           type="submit"
-          disabled={!quote || submitting}
+          disabled={!quote || submitting || !isValidAmount(sellAmount)}
           className="w-full py-3 rounded-xl bg-primary-500 text-white font-semibold hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          disabled={submitting || !isValidAmount(sellAmount)}
-          className="w-full py-3 rounded-xl bg-primary-500 text-white font-semibold disabled:opacity-50 transition-opacity"
         >
           {submitting ? 'Swapping…' : confirmOpen ? 'Confirm swap' : 'Review swap'}
         </button>
@@ -482,22 +424,8 @@ export default function Swap() {
               </span>
             </div>
           )}
-      {result && (
-        <div className="flex items-start gap-2 bg-green-500/10 border border-green-500/20 rounded-xl px-3 py-2 text-xs text-green-600 dark:text-green-400">
-          <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-          <span>Swap submitted successfully.</span>
         </div>
       )}
-
-      <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
-        <span>Auto-refresh in {refreshCountdown}s</span>
-        <button type="button" onClick={handleManualRefresh} className="hover:text-primary-500 transition-colors">
-          Refresh now
-        </button>
-      </div>
-      <div className="h-1 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
-        <div className="h-full bg-primary-500 transition-all" style={{ width: `${progressPct}%` }} />
-      </div>
     </div>
   );
 }

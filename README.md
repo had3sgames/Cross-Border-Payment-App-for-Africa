@@ -171,7 +171,11 @@ Sender → [approve USDC transfer] → Backend → [sign with keypair]
 
 ---
 
+## Getting Started
 
+### Prerequisites
+
+- Node.js 22 LTS or newer (pinned in `.nvmrc` — run `nvm use`)
 - A Stellar testnet account (auto-created on registration)
 
 ### 1. Database
