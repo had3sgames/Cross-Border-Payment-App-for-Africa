@@ -490,7 +490,7 @@ async function send(req, res, next) {
       );
 
       txResult = { transactionHash, ledger, type, claimableBalanceId, fee_breakdown: updated_fee_breakdown, txStatus };
-    });
+    }, { throwOnError: true });
 
     if (!lockAcquired) {
       // Lock was held by another request — treat as rate-limited

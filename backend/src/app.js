@@ -7,6 +7,7 @@ const Sentry = require('@sentry/node');
 
 const requestId = require('./middleware/requestId');
 const metricsMiddleware = require('./middleware/metricsMiddleware');
+const errorHandler = require('./middleware/errorHandler');
 const { registry } = require('./utils/metrics');
 const rateLimit = require('express-rate-limit');
 const rateLimiters = require('./middleware/rateLimiter');
@@ -216,6 +217,98 @@ const swaggerOptions = {
         },
         // Derived directly from the express-validator field spec in
         // validators/paymentSendValidators.js so the docs cannot drift from
-        // what the runtime v
+        // what the runtime validators actually accept.
+        PaymentSendRequest: paymentSendValidators.openApiSchema
+      }
+    }
+  },
+  apis: ['./src/routes/*.js']
+};
 
-/* … truncated 72 chars — edit only what you need near the top … */
+const specs = swaggerJsdoc(swaggerOptions);
+
+app.use('/api/docs', (req, res, next) => {
+  res.removeHeader('Content-Security-Policy');
+  next();
+});
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(specs));
+
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     summary: Public liveness probe
+ *     description: Returns the overall status and pool utilization. Use /api/admin/health for full diagnostics.
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Service is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   enum: [ok, degraded]
+ *                 pool:
+ *                   type: object
+ *                   properties:
+ *                     total: { type: integer }
+ *                     idle: { type: integer }
+ *                     waiting: { type: integer }
+ *       503:
+ *         description: Service is degraded
+ */
+app.get('/health', async (req, res) => {
+  try {
+    const health = await runHealthChecks();
+    res.status(health.status === 'ok' ? 200 : 503).json({
+      status: health.status,
+      pool: health.pool,
+    });
+  } catch {
+    res.status(503).json({ status: 'degraded' });
+  }
+});
+
+const deepHealthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many health check requests.' },
+});
+
+app.get('/health/deep', deepHealthLimiter, async (req, res) => {
+  try {
+    const health = await runDeepHealthChecks();
+    const httpStatus = health.status === 'unhealthy' ? 503 : 200;
+    res.status(httpStatus).json(health);
+  } catch {
+    res.status(503).json({ status: 'unhealthy' });
+  }
+});
+app.get('/api/health/ledger-listener', (req, res) => {
+  res.json(getLedgerHealth());
+});
+
+app.get('/metrics', async (req, res) => {
+  // BE-174: METRICS_TOKEN is required in production (enforced by validateEnv),
+  // so /metrics is never public there.
+  const token = process.env.METRICS_TOKEN;
+  if (token || process.env.NODE_ENV === 'production') {
+    const auth = req.headers.authorization || '';
+    if (!token || auth !== `Bearer ${token}`) {
+      return res.status(401).end();
+    }
+  }
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
+
+// @sentry/node v8: request isolation comes from Sentry.init() in index.js;
+// this registers the error handler (replaces the v7 Sentry.Handlers API).
+Sentry.setupExpressErrorHandler(app);
+
+app.use(errorHandler);
+
+module.exports = app;

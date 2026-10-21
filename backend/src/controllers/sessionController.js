@@ -42,7 +42,9 @@ async function blacklistJti(jti, ttlSeconds) {
 
 async function isJtiBlacklisted(jti) {
   if (!jti) return false;
-  const val = await cache.get(`jti:blacklist:${jti}`).catch(() => null);
+  // BE-172: fail closed — a Redis error propagates so the caller rejects the
+  // token instead of treating an outage as "not revoked".
+  const val = await cache.getStrict(`jti:blacklist:${jti}`);
   return val !== null;
 }
 

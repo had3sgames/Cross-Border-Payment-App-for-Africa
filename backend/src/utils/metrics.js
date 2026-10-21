@@ -171,8 +171,16 @@ const sep31CallbackSkippedTotal = new client.Counter({
   registers: [registry],
 });
 
+// BE-172: 1 when the shared Redis client is connected, 0 otherwise.
+const redisUp = new client.Gauge({
+  name: 'redis_up',
+  help: 'Whether the shared Redis connection is ready (1) or unavailable (0)',
+  registers: [registry],
+});
+
 module.exports = {
   registry,
+  redisUp,
   httpRequestDuration,
   horizonRequestDuration,
   dbQueryDuration,

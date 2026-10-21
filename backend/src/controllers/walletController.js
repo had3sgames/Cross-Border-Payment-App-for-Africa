@@ -258,29 +258,16 @@ async function getQRCode(req, res, next) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /wallet/transactions  (optionally ?wallet_id=<uuid>)
-// DEPRECATED — use GET /api/payments/history instead
+// GET /wallet/transactions
+// REMOVED (BE-175) — sunset 2026-01-01. Responds 410 Gone pointing to
+// GET /api/payments/history.
 // ---------------------------------------------------------------------------
-async function getWalletTransactions(req, res, next) {
-  try {
-    res.set('Deprecation', 'true');
-    res.set('Link', '</api/payments/history>; rel="successor-version"');
-    res.set('Sunset', 'Sat, 01 Jan 2026 00:00:00 GMT');
-
-    const wallet = await resolveWallet(req.user.userId, req.query.wallet_id || null);
-    if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
-
-    const txResult = await db.query(
-      `SELECT * FROM transactions
-       WHERE sender_wallet = $1 OR recipient_wallet = $1
-       ORDER BY created_at DESC LIMIT 50`,
-      [wallet.public_key],
-    );
-
-    res.json({ transactions: txResult.rows });
-  } catch (err) {
-    next(err);
-  }
+function getWalletTransactions(req, res) {
+  res.set('Link', '</api/payments/history>; rel="successor-version"');
+  res.status(410).json({
+    error: 'This endpoint has been removed. Use GET /api/payments/history instead.',
+    successor: '/api/payments/history',
+  });
 }
 
 // ---------------------------------------------------------------------------

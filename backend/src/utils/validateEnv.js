@@ -30,6 +30,10 @@ const CLAWBACK_REQUIRED_VARS_PRODUCTION = [
   'ISSUER_ENCRYPTED_SECRET_KEY',
 ];
 
+// BE-172/BE-174: token revocation and WebAuthn challenges depend on Redis,
+// and /metrics must never be public in production.
+const SECURITY_REQUIRED_VARS_PRODUCTION = ['REDIS_URL', 'METRICS_TOKEN'];
+
 /**
  * Validates required configuration before the server listens.
  * Never logs secret values — only variable names.
@@ -101,6 +105,18 @@ function validateEnv() {
   // regulatory/compliance capability and must fail fast at boot rather
   // than 500 on first use.
   if (process.env.NODE_ENV === 'production') {
+    const missingSecurity = SECURITY_REQUIRED_VARS_PRODUCTION.filter(
+      (name) => !isSet(process.env[name])
+    );
+    if (missingSecurity.length > 0) {
+      console.error(
+        '\x1b[31m[CONFIG ERROR] Missing required production environment variables:\x1b[0m',
+        missingSecurity.join(', ')
+      );
+      process.exit(1);
+      return;
+    }
+
     const missingClawback = CLAWBACK_REQUIRED_VARS_PRODUCTION.filter(
       (name) => !isSet(process.env[name])
     );
