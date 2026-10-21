@@ -11,6 +11,7 @@ const { remindScheduledFeeConfigs } = require('./jobs/remindScheduledFeeConfigs'
 const { processLoyaltyMintQueue } = require('./jobs/loyaltyMintJob');
 const { cleanupOldNotifications } = require('./jobs/cleanupOldNotifications');
 const { checkKycDocumentExpiry } = require('./jobs/kycExpiryJob');
+const paymentRequestCleanupJob = require('./jobs/paymentRequestCleanupJob');
 
 // Configurable cron expressions — fall back to sensible defaults
 const PAYMENTS_CRON       = process.env.CRON_SCHEDULED_PAYMENTS   || '* * * * *';   // every minute
@@ -24,6 +25,7 @@ const ANALYTICS_REFRESH_CRON = process.env.CRON_ANALYTICS_REFRESH   || '0 * * * 
 const LOYALTY_MINT_CRON    = process.env.CRON_LOYALTY_MINT          || '* * * * *';   // every minute
 const FEE_CONFIG_ACTIVATE_CRON = process.env.CRON_FEE_CONFIG_ACTIVATE || '* * * * *'; // every minute
 const NOTIFICATION_CLEANUP_CRON = process.env.CRON_NOTIFICATION_CLEANUP || '0 2 * * *'; // daily at 2 AM
+const PAYMENT_REQUEST_CLEANUP_CRON = process.env.PAYMENT_REQUEST_CLEANUP_CRON || '0 * * * *'; // hourly
 const FEE_CONFIG_REMINDER_CRON = process.env.CRON_FEE_CONFIG_REMINDER || '0 * * * *'; // hourly
 
 // Wrap a job so overlapping runs are skipped and errors are always caught
@@ -81,6 +83,9 @@ function startScheduler() {
 
   cron.schedule(NOTIFICATION_CLEANUP_CRON, safeJob('cleanupOldNotifications', cleanupOldNotifications));
   logger.info('Notification cleanup job registered', { cron: NOTIFICATION_CLEANUP_CRON });
+
+  cron.schedule(PAYMENT_REQUEST_CLEANUP_CRON, safeJob('paymentRequestCleanupJob', paymentRequestCleanupJob.run));
+  logger.info('Payment request cleanup job registered', { cron: PAYMENT_REQUEST_CLEANUP_CRON });
 }
 
 function stopScheduler() {

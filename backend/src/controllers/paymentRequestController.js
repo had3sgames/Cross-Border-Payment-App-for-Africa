@@ -57,12 +57,15 @@ async function getById(req, res, next) {
     const result = await db.query(
       `SELECT id, requester_wallet, amount, asset, memo, expires_at, claimed, claimed_tx_hash
        FROM payment_requests
-       WHERE id = $1 AND expires_at > NOW()`,
+       WHERE id = $1`,
       [id]
     );
 
     if (!result.rows[0]) {
-      return res.status(404).json({ error: 'Payment request not found or expired' });
+      return res.status(404).json({ error: 'Payment request not found' });
+    }
+    if (new Date(result.rows[0].expires_at) <= new Date()) {
+      return res.status(410).json({ error: 'Payment request has expired' });
     }
 
     res.json(result.rows[0]);
@@ -78,13 +81,16 @@ async function markClaimed(req, res, next) {
     const userId = req.user.userId;
 
     const result = await db.query(
-      `SELECT requester_id, requester_wallet, amount, asset, claimed
-       FROM payment_requests WHERE id = $1 AND expires_at > NOW()`,
+      `SELECT requester_id, requester_wallet, amount, asset, claimed, expires_at
+       FROM payment_requests WHERE id = $1`,
       [id]
     );
 
     if (!result.rows[0]) {
-      return res.status(404).json({ error: 'Payment request not found or expired' });
+      return res.status(404).json({ error: 'Payment request not found' });
+    }
+    if (new Date(result.rows[0].expires_at) <= new Date()) {
+      return res.status(410).json({ error: 'Payment request has expired' });
     }
 
     const paymentRequest = result.rows[0];

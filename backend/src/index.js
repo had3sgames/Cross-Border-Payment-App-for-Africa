@@ -35,7 +35,6 @@ const app = require('./app');
 const { detectTestnetReset, startFallbackDurationMonitor, stopFallbackDurationMonitor } = require('./services/stellar');
 const { initEmailQueue, drainEmailQueue } = require('./services/email');
 const { startPriceRefreshJob, stopPriceRefreshJob } = require('./services/priceOracle');
-const { syncOfferEvents } = require('./jobs/syncOfferEvents');
 const ledgerListener = require('./services/ledgerListener');
 const { Server: SocketIOServer } = require('socket.io');
 const jwt = require('jsonwebtoken');

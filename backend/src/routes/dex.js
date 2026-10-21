@@ -133,6 +133,8 @@ router.post('/swap',
         minReceived: min_received,
       });
 
+      await db.query('UPDATE wallets SET has_dex_activity = TRUE WHERE public_key = $1', [public_key]);
+
       res.json(result);
     } catch (err) {
       next(err);

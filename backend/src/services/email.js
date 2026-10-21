@@ -195,6 +195,23 @@ async function sendTransactionEmail(email, type, tx) {
   return enqueueEmail({ to: email, subject, html });
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
+async function sendClaimableBalanceExpiringEmail(email, name, balanceId, expiresAt) {
+  return enqueueEmail({
+    to: email,
+    subject: 'AfriPay: Claimable balance expiring soon',
+    html: `<p>Hi ${escapeHtml(name)},</p>
+           <p>Your claimable balance <strong>${escapeHtml(balanceId)}</strong> will expire on
+           <strong>${escapeHtml(new Date(expiresAt).toUTCString())}</strong>.</p>
+           <p>Please claim it before it expires to avoid losing the funds.</p>`,
+  });
+}
+
 async function sendPaymentRequestExpiredEmail(email, amount, asset) {
   return enqueueEmail({
     to: email,
@@ -237,6 +254,8 @@ async function sendKycExpiryReminderEmail(email, name, daysRemaining) {
 }
 
 module.exports = {
+  escapeHtml,
+  sendClaimableBalanceExpiringEmail,
   initEmailQueue,
   drainEmailQueue,
   enqueueEmail,
