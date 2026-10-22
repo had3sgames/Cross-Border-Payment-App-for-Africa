@@ -13,6 +13,7 @@ const {
   changeEmail,
   verifyEmailChange,
   getActivity,
+  getMe,
   uploadAvatar,
   setPIN,
   verifyPIN,

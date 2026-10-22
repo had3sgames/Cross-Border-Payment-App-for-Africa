@@ -7,6 +7,16 @@ on:
     branches: [ main ]
 
 jobs:
+  contracts-integration:
+    name: Contracts integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test (cross-contract)
+        working-directory: contracts/integration-tests
+        run: cargo test
+
   test:
     name: Test Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest

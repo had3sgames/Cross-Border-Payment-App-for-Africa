@@ -67,3 +67,11 @@ export const NETWORK_PASSPHRASE = IS_TESTNET ? Networks.TESTNET : Networks.PUBLI
  *   'testnet' | 'public'
  */
 export const NETWORK_LABEL = IS_TESTNET ? 'testnet' : 'public';
+
+/** Stellar Expert URL for a transaction hash on the configured network. */
+export const explorerTxUrl = (hash) =>
+  `https://stellar.expert/explorer/${NETWORK_LABEL}/tx/${hash}`;
+
+/** Stellar Expert URL for an account address on the configured network. */
+export const explorerAccountUrl = (address) =>
+  `https://stellar.expert/explorer/${NETWORK_LABEL}/account/${address}`;

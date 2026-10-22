@@ -64,6 +64,15 @@ function validateEnv() {
     return;
   }
 
+  // SDF runs no public mainnet Soroban RPC, so mainnet needs an explicit endpoint (#1301).
+  if (process.env.STELLAR_NETWORK === 'mainnet' && !isSet(process.env.SOROBAN_RPC_URL)) {
+    console.error(
+      '\x1b[31m[CONFIG ERROR] SOROBAN_RPC_URL is required when STELLAR_NETWORK=mainnet.\x1b[0m'
+    );
+    process.exit(1);
+    return;
+  }
+
   // ENCRYPTION_KEY length enforcement.
   // All five Soroban-facing services derive a 32-byte AES key via SHA-256
   // (deriveAesKey in utils/symmetricEncryption.js). Any printable string of

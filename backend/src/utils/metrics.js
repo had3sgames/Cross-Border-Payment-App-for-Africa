@@ -171,6 +171,14 @@ const sep31CallbackSkippedTotal = new client.Counter({
   registers: [registry],
 });
 
+// BE-178: fraud rule load/evaluation failures
+const fraudRuleErrorsTotal = new client.Counter({
+  name: 'fraud_rule_errors_total',
+  help: 'Total fraud rule load or evaluation errors, labelled by stage (load, evaluate) and rule',
+  labelNames: ['stage', 'rule'],
+  registers: [registry],
+});
+
 module.exports = {
   registry,
   httpRequestDuration,
@@ -197,4 +205,5 @@ module.exports = {
   txQueueBackpressure,
   txQueuePendingTasksTotal,
   sep31CallbackSkippedTotal,
+  fraudRuleErrorsTotal,
 };

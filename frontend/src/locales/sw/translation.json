@@ -13,7 +13,8 @@
     "sign_out": "Toka",
     "no_transactions": "Hakuna miamala iliyopatikana",
     "see_all": "Ona yote",
-    "rates_disclaimer": "Viwanzo vya ubadilishaji ni takribani na vinaweza kuhifadhiwa. Bei za sasa huhuishwa kila dakika takriban."
+    "rates_disclaimer": "Viwanzo vya ubadilishaji ni takribani na vinaweza kuhifadhiwa. Bei za sasa huhuishwa kila dakika takriban.",
+    "close": "Funga"
   },
   "welcome": {
     "tagline": "Malipo ya haraka na salama ya kimataifa yanayoendeshwa na Stellar blockchain",
@@ -140,7 +141,9 @@
     "review": "Kagua Malipo",
     "confirm_send": "Thibitisha na Tuma",
     "success": "Malipo yametumwa!",
-    "error": "Muamala umeshindwa"
+    "error": "Muamala umeshindwa",
+    "qr_unsupported_uri": "Kodi hii ya QR ni ombi la muamala, si ombi la malipo. Kodi za QR za malipo pekee ndizo zinazotumika.",
+    "qr_prefilled": "Maelezo ya malipo yamejazwa kutoka kodi ya QR — tafadhali kagua kabla ya kutuma."
   },
   "auth": {
     "setup_pin_title": "Weka PIN ya Muamala",
@@ -199,5 +202,22 @@
     "contact_error": "Imeshindwa kuongeza mawasiliano",
     "address_copied": "Anwani imenakiliwa!",
     "language": "Lugha"
+  },
+  "contacts_import": {
+    "open": "Ingiza CSV",
+    "title": "Ingiza anwani kupitia CSV",
+    "description": "Pakia faili la CSV ili kuongeza wapokeaji wengi kwa mara moja. Pakua kiolezo kwanza ili kupata vichwa sahihi vya safu.",
+    "download_template": "↓ Pakua kiolezo cha CSV",
+    "select_file": "Chagua faili la CSV (kiwango cha juu 5 MB)",
+    "file_too_large": "Faili ni kubwa mno. Ukubwa wa juu ni 5 MB.",
+    "template_failed": "Imeshindwa kupakua kiolezo. Tafadhali jaribu tena.",
+    "no_file": "Tafadhali chagua faili la CSV la kuingiza.",
+    "upload_failed": "Imeshindwa kuingiza anwani. Kagua muundo wa faili.",
+    "upload": "Pakia na uingize",
+    "uploading": "Inapakia…",
+    "imported": "Zimeingizwa: {{count}}",
+    "skipped": "Nakala zilizorukwa: {{count}}",
+    "failed": "Zimeshindwa: {{count}}",
+    "row_error": "Safu {{row}}: {{error}}"
   }
 }

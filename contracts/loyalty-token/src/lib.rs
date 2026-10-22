@@ -41,7 +41,7 @@ use soroban_sdk::{
 
 // ── KYC Tier enum ────────────────────────────────────────────────────────────────
 // Replicated from kyc-attestation contract for type safety in cross-contract calls.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[contracttype]
 #[repr(u32)]
 pub enum KycTier {
@@ -50,16 +50,20 @@ pub enum KycTier {
     Business = 2,
 }
 
+#[derive(Debug)]
 #[contracttype]
 pub struct AllowanceValue {
     pub amount: i128,
     pub expires_at: u64,
 }
 
+#[cfg(test)]
 mod test;
+mod test_allowance;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -74,9 +78,10 @@ pub enum DataKey {
     SnapshotCount,
     /// Ledger sequence at which a snapshot was taken.
     SnapshotLedger(u32),
-    /// Per-account checkpoint history: `Vec<(ledger, balance)>` written lazily
-    /// on every balance change. Used to reconstruct historical balances without
-    /// iterating over all holders.
+    /// Per-account checkpoint history: `Vec<(snapshot_id, balance)>` sorted by
+    /// id. An entry is written only on the first balance change after a new
+    /// snapshot and records the balance held at that snapshot, so the vector
+    /// holds at most one entry per snapshot.
     Checkpoints(Address),
     /// Maps a tier index (0–4) to its Tier configuration.
     Tier(u32),
@@ -85,7 +90,7 @@ pub enum DataKey {
 // ── Tier type ─────────────────────────────────────────────────────────────────
 
 /// A single redemption tier: points required and the fee-discount awarded.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct Tier {
     /// Points the user must hold (and will burn) to redeem this tier.
@@ -228,52 +233,121 @@ impl LoyaltyTokenContract {
             .persistent()
             .set(&DataKey::SnapshotLedger(snapshot_id), &env.ledger().sequence());
 
+        env.events().publish(
+            (symbol_short!("snapshot"), symbol_short!("created")),
+            (snapshot_id, env.ledger().sequence()),
+        );
+
         snapshot_id
+    }
+
+    /// Delete a snapshot, freeing a slot under the active-snapshot limit. Admin only.
+    pub fn delete_snapshot(env: Env, admin: Address, snapshot_id: u32) {
+        admin.require_auth();
+
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            panic!("unauthorized: caller is not admin");
+        }
+
+        let key = DataKey::SnapshotLedger(snapshot_id);
+        if !env.storage().persistent().has(&key) {
+            panic!("unknown snapshot");
+        }
+        env.storage().persistent().remove(&key);
+
+        let active_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SnapshotCount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SnapshotCount, &active_count.saturating_sub(1));
+
+        env.events().publish(
+            (symbol_short!("snapshot"), symbol_short!("deleted")),
+            snapshot_id,
+        );
     }
 
     /// Return the balance recorded for a holder at the specified snapshot.
     ///
     /// Reconstructed from the per-account checkpoint history: the balance is the
-    /// value of the latest checkpoint at or before the snapshot's ledger. Returns
-    /// 0 when the account had no balance at that ledger.
+    /// value of the first checkpoint with id >= `snapshot_id` (binary search).
+    /// When none exists the balance hasn't changed since and the current balance
+    /// is returned.
     pub fn snapshot_balance(env: Env, snapshot_id: u32, account: Address) -> i128 {
-        let ledger: u32 = env
+        if !env
             .storage()
             .persistent()
-            .get(&DataKey::SnapshotLedger(snapshot_id))
-            .expect("unknown snapshot");
+            .has(&DataKey::SnapshotLedger(snapshot_id))
+        {
+            panic!("unknown snapshot");
+        }
 
         let checkpoints: Vec<(u32, i128)> = env
             .storage()
             .persistent()
-            .get(&DataKey::Checkpoints(account))
+            .get(&DataKey::Checkpoints(account.clone()))
             .unwrap_or(Vec::new(&env));
 
-        let mut balance: i128 = 0;
-        for (cp_ledger, cp_balance) in checkpoints.iter() {
-            if cp_ledger <= ledger {
-                balance = cp_balance;
+        let (mut lo, mut hi) = (0u32, checkpoints.len());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if checkpoints.get_unchecked(mid).0 < snapshot_id {
+                lo = mid + 1;
             } else {
-                break;
+                hi = mid;
             }
         }
-        balance
+        if lo < checkpoints.len() {
+            checkpoints.get_unchecked(lo).1
+        } else {
+            Self::balance(env, account)
+        }
     }
 
     // ── SEP-41: allowances ────────────────────────────────────────────────────
 
+    /// Remaining allowance, or 0 once the current ledger is past the
+    /// expiration ledger the owner set.
     pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {
-        let key = DataKey::Allowance(from, spender);
+        Self::read_allowance(&env, &from, &spender).amount
+    }
+
+    /// Live allowance (amount + original expiration). Expired entries read as
+    /// amount 0 so callers can't spend them.
+    fn read_allowance(env: &Env, from: &Address, spender: &Address) -> AllowanceValue {
+        let key = DataKey::Allowance(from.clone(), spender.clone());
         match env.storage().persistent().get::<DataKey, AllowanceValue>(&key) {
-            Some(a) => {
-                if a.expires_at != 0 && env.ledger().sequence() as u64 > a.expires_at {
-                    0
-                } else {
-                    a.amount
-                }
-            }
-            None => 0,
+            Some(a) if (env.ledger().sequence() as u64) <= a.expires_at => a,
+            Some(a) => AllowanceValue { amount: 0, expires_at: a.expires_at },
+            None => AllowanceValue { amount: 0, expires_at: 0 },
         }
+    }
+
+    /// SEP-41: a non-zero allowance must not already be expired.
+    fn check_expiration(env: &Env, amount: i128, expiration_ledger: u32) {
+        if amount > 0 && expiration_ledger < env.ledger().sequence() {
+            panic!("expiration_ledger is less than ledger seq when amount > 0");
+        }
+    }
+
+    /// Deduct `amount` from `spender`'s allowance, keeping the expiration
+    /// ledger the owner originally granted.
+    fn spend_allowance(env: &Env, from: &Address, spender: &Address, amount: i128) {
+        let current = Self::read_allowance(env, from, spender);
+        if current.amount < amount {
+            panic!("insufficient allowance");
+        }
+        env.storage().persistent().set(
+            &DataKey::Allowance(from.clone(), spender.clone()),
+            &AllowanceValue {
+                amount: current.amount - amount,
+                expires_at: current.expires_at,
+            },
+        );
     }
 
     /// Approve `spender` to spend `amount` of `from`'s tokens until `expiration_ledger`.
@@ -291,6 +365,7 @@ impl LoyaltyTokenContract {
         if amount < 0 {
             panic!("amount must be non-negative");
         }
+        Self::check_expiration(&env, amount, expiration_ledger);
         let key = DataKey::Allowance(from.clone(), spender.clone());
         env.storage().persistent().set(
             &key,
@@ -322,6 +397,7 @@ impl LoyaltyTokenContract {
         let key = DataKey::Allowance(from.clone(), spender.clone());
         let current = Self::allowance(env.clone(), from.clone(), spender.clone());
         let new_amount = current + amount;
+        Self::check_expiration(&env, new_amount, expiration_ledger);
         env.storage().persistent().set(
             &key,
             &AllowanceValue {
@@ -352,6 +428,7 @@ impl LoyaltyTokenContract {
         let key = DataKey::Allowance(from.clone(), spender.clone());
         let current = Self::allowance(env.clone(), from.clone(), spender.clone());
         let new_amount = if amount > current { 0 } else { current - amount };
+        Self::check_expiration(&env, new_amount, expiration_ledger);
         env.storage().persistent().set(
             &key,
             &AllowanceValue {
@@ -372,9 +449,10 @@ impl LoyaltyTokenContract {
     /// Emits the SEP-41 `transfer` event with topics `("transfer", from, to)`
     /// and data `amount`.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        governance::require_not_paused(&env);
         from.require_auth();
-        if amount < 0 {
-            panic!("amount must be non-negative");
+        if amount <= 0 {
+            panic!("amount must be positive");
         }
         Self::move_balance(&env, &from, &to, amount);
         env.events().publish(
@@ -388,22 +466,12 @@ impl LoyaltyTokenContract {
     /// Emits the SEP-41 `transfer` event with topics `("transfer", from, to)`
     /// and data `amount`.
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        governance::require_not_paused(&env);
         spender.require_auth();
-        if amount < 0 {
-            panic!("amount must be non-negative");
+        if amount <= 0 {
+            panic!("amount must be positive");
         }
-        let key = DataKey::Allowance(from.clone(), spender.clone());
-        let current = Self::allowance(env.clone(), from.clone(), spender.clone());
-        if current < amount {
-            panic!("insufficient allowance");
-        }
-        env.storage().persistent().set(
-            &key,
-            &AllowanceValue {
-                amount: current - amount,
-                expires_at: 0,
-            },
-        );
+        Self::spend_allowance(&env, &from, &spender, amount);
         Self::move_balance(&env, &from, &to, amount);
         env.events().publish(
             (symbol_short!("transfer"), from, to),
@@ -418,6 +486,7 @@ impl LoyaltyTokenContract {
     /// Emits the SEP-41 `mint` event with topics `("mint", admin, to)` and
     /// data `amount`.
     pub fn mint(env: Env, admin: Address, to: Address, amount: i128) {
+        governance::require_not_paused(&env);
         admin.require_auth();
         let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         if admin != stored_admin {
@@ -469,18 +538,7 @@ impl LoyaltyTokenContract {
         if amount < 0 {
             panic!("amount must be non-negative");
         }
-        let key = DataKey::Allowance(from.clone(), spender.clone());
-        let current = Self::allowance(env.clone(), from.clone(), spender.clone());
-        if current < amount {
-            panic!("insufficient allowance");
-        }
-        env.storage().persistent().set(
-            &key,
-            &AllowanceValue {
-                amount: current - amount,
-                expires_at: 0,
-            },
-        );
+        Self::spend_allowance(&env, &from, &spender, amount);
         let balance = Self::balance(env.clone(), from.clone());
         if balance < amount {
             panic!("insufficient balance");
@@ -539,19 +597,36 @@ impl LoyaltyTokenContract {
         Self::set_balance(env, to, to_balance + amount);
     }
 
-    /// Persist a balance and append a checkpoint for historical reconstruction.
+    /// Persist a balance. If a snapshot was taken since this account's last
+    /// checkpoint, first record the pre-change balance against that snapshot.
     fn set_balance(env: &Env, account: &Address, balance: i128) {
+        let latest_snapshot: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SnapshotCounter)
+            .unwrap_or(0);
+        if latest_snapshot > 0 {
+            let key = DataKey::Checkpoints(account.clone());
+            let mut checkpoints: Vec<(u32, i128)> = env
+                .storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or(Vec::new(env));
+            let needs_checkpoint = match checkpoints.last() {
+                Some((id, _)) => id < latest_snapshot,
+                None => true,
+            };
+            if needs_checkpoint {
+                let previous = Self::balance(env.clone(), account.clone());
+                checkpoints.push_back((latest_snapshot, previous));
+                env.storage().persistent().set(&key, &checkpoints);
+            }
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Balance(account.clone()), &balance);
-        let mut checkpoints: Vec<(u32, i128)> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Checkpoints(account.clone()))
-            .unwrap_or(Vec::new(env));
-        checkpoints.push_back((env.ledger().sequence(), balance));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Checkpoints(account.clone()), &checkpoints);
     }
 }
+
+mod governance;
+pub use governance::{CONTRACT_VERSION, UPGRADE_TIMELOCK_SECS};

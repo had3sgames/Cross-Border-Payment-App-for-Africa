@@ -5,6 +5,7 @@ import { FixedSizeList } from 'react-window';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import api from '../utils/api';
+import { explorerTxUrl } from '../config/network';
 import { truncateAddress } from '../utils/currency';
 import { TransactionCardSkeleton } from '../components/Skeleton';
 import ConfirmModal from '../components/ConfirmModal';
@@ -682,7 +683,7 @@ export default function TransactionHistory() {
                             </div>
                             {tx.tx_hash && (
                               <a
-                                href={`https://stellar.expert/explorer/${process.env.REACT_APP_STELLAR_NETWORK || 'testnet'}/tx/${tx.tx_hash}`}
+                                href={explorerTxUrl(tx.tx_hash)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-gray-500 hover:text-primary-400 transition-colors"
@@ -809,7 +810,7 @@ export default function TransactionHistory() {
               {/* Stellar Explorer Link */}
               {selectedTx.tx_hash && (
                 <a
-                  href={`https://stellar.expert/explorer/testnet/tx/${selectedTx.tx_hash}`}
+                  href={explorerTxUrl(selectedTx.tx_hash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="w-full flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-600 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"

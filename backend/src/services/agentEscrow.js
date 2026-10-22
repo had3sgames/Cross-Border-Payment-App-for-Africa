@@ -20,22 +20,11 @@ const StellarSdk = require("@stellar/stellar-sdk");
 
 const { decryptAesCbc } = require("../utils/symmetricEncryption");
 
-const isTestnet = process.env.STELLAR_NETWORK !== "mainnet";
-const networkPassphrase = isTestnet
-  ? StellarSdk.Networks.TESTNET
-  : StellarSdk.Networks.PUBLIC;
-
-const rpcUrl =
-  process.env.SOROBAN_RPC_URL ||
-  (isTestnet
-    ? "https://soroban-testnet.stellar.org"
-    : "https://mainnet.soroban.stellar.org");
+const { isTestnet, networkPassphrase, getRpc, waitForSorobanTx } = require("../config/soroban");
 
 const CONTRACT_ID = process.env.AGENT_ESCROW_CONTRACT_ID;
 
 const CONFIRMATION_TIMEOUT_MS = parseInt(process.env.SOROBAN_CONFIRMATION_TIMEOUT_MS || "30000", 10);
-const POLL_INTERVAL_MS = 1000;
-const MAX_POLL_ITERATIONS = Math.ceil(CONFIRMATION_TIMEOUT_MS / POLL_INTERVAL_MS);
 
 /**
  * The two-element topic prefix used by every agent-escrow contract event.
@@ -119,10 +108,6 @@ function subscribeToEscrowEvents(eventName, onEvent, onError) {
   return close;
 }
 
-function getRpc() {
-  return new StellarSdk.SorobanRpc.Server(rpcUrl);
-}
-
 async function getRecommendedFee(rpc) {
   try {
     const stats = await rpc.getFeeStats();
@@ -175,16 +160,7 @@ async function createEscrow({ encryptedSecretKey, recipient, agent, amount, feeB
     throw Object.assign(new Error(`create_escrow failed: ${result.errorResult}`), { status: 400 });
   }
 
-  let response = result;
-  let iterations = 0;
-  while (response.status === "PENDING" || response.status === "NOT_FOUND") {
-    if (iterations >= MAX_POLL_ITERATIONS) {
-      throw Object.assign(new Error("Transaction confirmation timeout after 30s"), { status: 504 });
-    }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    response = await rpc.getTransaction(result.hash);
-    iterations++;
-  }
+  const response = await waitForSorobanTx(rpc, result, { timeoutMs: CONFIRMATION_TIMEOUT_MS });
 
   if (response.status !== "SUCCESS") {
     throw Object.assign(new Error(`Transaction failed: ${response.status}`), { status: 400 });
@@ -229,16 +205,7 @@ async function confirmPayout({ encryptedSecretKey, escrowId }) {
     throw Object.assign(new Error(`confirm_payout failed: ${result.errorResult}`), { status: 400 });
   }
 
-  let response = result;
-  let iterations = 0;
-  while (response.status === "PENDING" || response.status === "NOT_FOUND") {
-    if (iterations >= MAX_POLL_ITERATIONS) {
-      throw Object.assign(new Error("Transaction confirmation timeout after 30s"), { status: 504 });
-    }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    response = await rpc.getTransaction(result.hash);
-    iterations++;
-  }
+  const response = await waitForSorobanTx(rpc, result, { timeoutMs: CONFIRMATION_TIMEOUT_MS });
 
   if (response.status !== "SUCCESS") {
     throw Object.assign(new Error(`Transaction failed: ${response.status}`), { status: 400 });
@@ -282,16 +249,7 @@ async function cancelEscrow({ encryptedSecretKey, escrowId }) {
     throw Object.assign(new Error(`cancel_escrow failed: ${result.errorResult}`), { status: 400 });
   }
 
-  let response = result;
-  let iterations = 0;
-  while (response.status === "PENDING" || response.status === "NOT_FOUND") {
-    if (iterations >= MAX_POLL_ITERATIONS) {
-      throw Object.assign(new Error("Transaction confirmation timeout after 30s"), { status: 504 });
-    }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    response = await rpc.getTransaction(result.hash);
-    iterations++;
-  }
+  const response = await waitForSorobanTx(rpc, result, { timeoutMs: CONFIRMATION_TIMEOUT_MS });
 
   if (response.status !== "SUCCESS") {
     throw Object.assign(new Error(`Transaction failed: ${response.status}`), { status: 400 });

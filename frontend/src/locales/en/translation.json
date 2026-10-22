@@ -157,7 +157,9 @@
     "review": "Review Payment",
     "confirm_send": "Confirm & Send",
     "success": "Payment sent successfully!",
-    "error": "Transaction failed"
+    "error": "Transaction failed",
+    "qr_unsupported_uri": "This QR code is a transaction request, not a payment request. Only payment QR codes are supported.",
+    "qr_prefilled": "Payment details filled from QR code — please review before sending."
   },
   "auth": {
     "setup_pin_title": "Set Transaction PIN",
@@ -206,5 +208,22 @@
     "dex_rate": "DEX rate",
     "slippage_tolerance": "Slippage Tolerance",
     "custom": "Custom"
+  },
+  "contacts_import": {
+    "open": "Import CSV",
+    "title": "Import Contacts via CSV",
+    "description": "Upload a CSV file to bulk-add frequent recipients. Download the template first to get the correct column headers.",
+    "download_template": "↓ Download CSV template",
+    "select_file": "Choose a CSV file (max 5 MB)",
+    "file_too_large": "File is too large. The maximum size is 5 MB.",
+    "template_failed": "Failed to download template. Please try again.",
+    "no_file": "Please select a CSV file to import.",
+    "upload_failed": "Failed to import contacts. Check the file format.",
+    "upload": "Upload & Import",
+    "uploading": "Uploading…",
+    "imported": "Imported: {{count}}",
+    "skipped": "Skipped duplicates: {{count}}",
+    "failed": "Failed: {{count}}",
+    "row_error": "Row {{row}}: {{error}}"
   }
 }

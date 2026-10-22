@@ -6,8 +6,6 @@ const { createWallet, encryptPrivateKey, addTrustline } = require('../services/s
 const audit = require('../services/audit');
 const logger = require('../utils/logger');
 const { hashPIN, comparePIN, validatePIN } = require('../services/pin');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../services/email');
-const { generateSecret, verifyToken, generateBackupCodes, useBackupCode } = require('../services/twofa');
 const { sendVerificationEmail, sendPasswordResetEmail, sendBackupCodeWarningEmail, sendEmailChangeRequestedNotice } = require('../services/email');
 const { generateSecret, verifyToken, getTokenCounter, generateBackupCodes, useBackupCode, hashBackupCode, verifyBackupCode } = require('../services/twofa');
 const {
@@ -22,6 +20,7 @@ const {
   verifyDeviceToken,
 } = require('../utils/tokens');
 const { setCsrfCookie } = require('../middleware/csrf');
+const { issueStepUpToken } = require('../middleware/requireStepUp');
 const cache = require('../utils/cache');
 const { encryptSecret, decryptSecret } = require('../utils/symmetricEncryption');
 const {
@@ -34,6 +33,7 @@ const {
 
 const { sendOTP } = require('../services/sms');
 const { recordSession, invalidateOtherSessions } = require('./sessionController');
+const { disconnectJti, disconnectUser } = require('../services/socketRegistry');
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — email verification tokens
 const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
@@ -48,7 +48,7 @@ const FORGOT_PASSWORD_MESSAGE = {
     'If an account exists for this email, you will receive password reset instructions shortly.',
 };
 
-async function recordFailedAuthAttempt(userId, req) {
+async function recordFailedAuthAttempt(userId, req, reason = 'invalid_2fa') {
   const attemptWindowMs = ATTEMPT_WINDOW_MINUTES * 60 * 1000;
   const lockoutDurationMs = LOCKOUT_DURATION_MINUTES * 60 * 1000;
   const result = await db.query(
@@ -74,7 +74,7 @@ async function recordFailedAuthAttempt(userId, req) {
   audit.log(userId, 'login_failure', req.ip, req.headers['user-agent'], {
     failed_attempts: updated.failed_login_attempts,
     attempts_remaining: Math.max(0, MAX_FAILED_ATTEMPTS - updated.failed_login_attempts),
-    reason: 'invalid_2fa',
+    reason,
   });
   return updated;
 }
@@ -427,7 +427,7 @@ async function login(req, res, next) {
     );
 
     // Record session for remote logout support
-    await recordSession(user.id, token, req).catch(() => {});
+    await recordSession(user.id, token, req, familyId).catch(() => {});
 
     const device_token = rememberDevice ? signDeviceToken({ userId: user.id }) : undefined;
 
@@ -475,6 +475,7 @@ async function logout(req, res, next) {
         }
       }
     }
+    disconnectJti(req.user?.jti);
     res.clearCookie(COOKIE_NAME, { ...COOKIE_OPTIONS, maxAge: undefined });
     res.json({ message: 'Logged out successfully' });
   } catch (err) {
@@ -754,19 +755,33 @@ async function verifyPIN(req, res, next) {
     const { pin } = req.body;
     const userId = req.user.userId;
 
-    const result = await db.query(`SELECT pin_hash FROM users WHERE id = $1`, [userId]);
+    const result = await db.query(`SELECT pin_hash, locked_until FROM users WHERE id = $1`, [userId]);
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
 
-    const { pin_hash } = result.rows[0];
+    const { pin_hash, locked_until } = result.rows[0];
+    if (locked_until && new Date(locked_until) > new Date()) {
+      return res.status(423).json({ error: 'Account locked. Try again later.', locked_until: new Date(locked_until).toISOString() });
+    }
 
     if (!pin_hash) {
       return res.status(400).json({ error: 'PIN not configured. Please set up a PIN first.' });
     }
 
     const isPINValid = await comparePIN(pin, pin_hash);
-    if (!isPINValid) return res.status(401).json({ error: 'Invalid PIN' });
+    if (!isPINValid) {
+      const failed = await recordFailedAuthAttempt(userId, req, 'invalid_pin');
+      if (failed?.locked_until && new Date(failed.locked_until) > new Date()) {
+        return res.status(423).json({ error: 'Account locked. Try again later.', locked_until: new Date(failed.locked_until).toISOString() });
+      }
+      return res.status(401).json({ error: 'Invalid PIN' });
+    }
 
-    res.json({ message: 'PIN verified successfully' });
+    await db.query(
+      'UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_failed_attempt_at = NULL WHERE id = $1',
+      [userId],
+    );
+    const stepUp = issueStepUpToken(userId);
+    res.json({ message: 'PIN verified successfully', ...stepUp });
   } catch (err) {
     next(err);
   }
@@ -1019,6 +1034,7 @@ async function resetPassword(req, res, next) {
       client.release();
     }
 
+    disconnectUser(userId);
     audit.log(userId, 'password_change', req.ip, req.headers['user-agent']);
     audit.log(userId, 'password_reset_sessions_invalidated', req.ip, req.headers['user-agent']);
     res.json({ message: 'Password has been reset. You can now log in.' });

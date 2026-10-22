@@ -58,7 +58,9 @@ const app = express();
 // so only TRUSTED_PROXIES controls which hops may set X-Forwarded-For.
 app.set('trust proxy', resolveTrustProxy(process.env, logger));
 
-app.use(Sentry.Handlers.requestHandler());
+// Sentry v8 removed the v7 `Sentry.Handlers` namespace. Request isolation is
+// handled by `Sentry.init()` and errors are captured via
+// `Sentry.setupExpressErrorHandler(app)` registered after all routes below.
 
 app.use(requestId);
 app.use((req, res, next) => {
@@ -123,6 +125,15 @@ app.use('/api/auth/login', rateLimiters.authLimiter);
 app.use('/api/auth/register', rateLimiters.authLimiter);
 
 app.use('/api/auth', authRoutes);
+// Deprecated alias for /api/contacts (BE-188) — same router and middleware stack.
+const CONTACTS_SUNSET = 'Wed, 31 Mar 2027 00:00:00 GMT';
+app.use('/api/wallet/contacts', (req, res, next) => {
+  res.set('Deprecation', 'true');
+  res.set('Sunset', CONTACTS_SUNSET);
+  res.set('Link', '</api/contacts>; rel="successor-version"');
+  next();
+}, contactsRoutes);
+app.use('/api/wallet', walletRoutes);
 app.use('/api/wallet', geoRestriction, walletRoutes);
 app.use('/api/payments', geoRestriction, paymentRoutes);
 app.use('/api/payment-requests', geoRestriction, paymentRequestRoutes);
@@ -163,6 +174,10 @@ if (process.env.NODE_ENV !== 'production') {
 }
 app.use('/', stellarTomlRoutes);
 
+// Sentry v8: register the Express error handler after all routes so thrown
+// route errors are reported. No-op when Sentry was not initialized (no DSN).
+Sentry.setupExpressErrorHandler(app);
+
 // Swagger API Documentation
 const swaggerOptions = {
   definition: {
@@ -194,23 +209,6 @@ const swaggerOptions = {
         Error: {
           type: 'object',
           properties: {
-            error: {
-              type: 'string'
-            },
-            errors: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  msg: { type: 'string' },
-                  param: { type: 'string' }
-                }
-              }
-            }
-          }
-        },
-        // Derived directly from the express-validator field spec in
-        // validators/paymentSendValidators.js so the docs cannot drift from
-        // what the runtime v
+            error
 
-/* … truncated 72 chars — edit only what you need near the top … */
+/* … truncated 587 chars — edit only what you need near the top … */

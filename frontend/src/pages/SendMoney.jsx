@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useReducer, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useReducer, useRef, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams, useBeforeUnload, Link } from 'react-router-dom';
 import { useMemoValidation } from '../hooks/useMemoValidation';
 import {
@@ -20,13 +20,16 @@ import { useExchangeRates } from '../hooks/useExchangeRates';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { Skeleton } from '../components/Skeleton';
-import QRScanner from '../components/QRScanner';
 import PINVerificationModal from '../components/PINVerificationModal';
 import XDRInspectorModal from '../components/XDRInspectorModal';
-import LedgerSignModal from '../components/LedgerSignModal';
 import PushNotificationPrompt from '../components/PushNotificationPrompt';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { usePaymentStream, CONNECTION_STATE } from '../hooks/usePaymentStream';
+
+// Lazy-loaded so react-qr-reader and @ledgerhq/* stay out of the main bundle.
+const QRScanner = lazy(() => import('../components/QRScanner'));
+const LedgerSignModal = lazy(() => import('../components/LedgerSignModal'));
+const hasWebUSB = () => typeof navigator !== 'undefined' && 'usb' in navigator;
 
 const SLIPPAGE_OPTIONS = [0.5, 1, 2];
 const DEFAULT_SLIPPAGE = 1;
@@ -120,6 +123,7 @@ export default function SendMoney() {
         }));
       })
       .catch(() => {});
+  }, [requestId]); // eslint-disable-line react-hooks/exhaustive-deps
   }, [requestId]); // eslint-disable-line react-hooks/exhaustive-deps -- prefill once per request id; must not overwrite later user edits
   const { currencies, convertFromXLM, usingApproximateRates } = useExchangeRates();
   const [pathResult, setPathResult] = useState(null);
@@ -146,6 +150,9 @@ export default function SendMoney() {
 
   const isCrossAsset = usePathPayment && form.destination_asset && form.destination_asset !== form.asset;
 
+  /** Returns true for a valid Ed25519 public key or a federation address */
+  const isValidStellarAddress = (addr) =>
+    (addr.startsWith('G') && addr.length === 56) || addr.includes('*');
   /** True for a checksum-valid Ed25519 key or a well-formed federation address. */
   const isValidStellarAddress = (addr) => validateStellarAddress(addr) === null;
 
@@ -269,6 +276,40 @@ export default function SendMoney() {
       [formIsDirty]
     )
   );
+
+  useEffect(() => {
+    api
+      .get('/wallet/list')
+      .then((r) => {
+        setWallets(r.data.wallets || []);
+        // If no wallet_id in URL, default to the user's default wallet
+        if (!selectedWalletId && r.data.wallets?.length) {
+          const def = r.data.wallets.find((w) => w.is_default) || r.data.wallets[0];
+          setSelectedWalletId(def.id);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api
+      .get('/contacts')
+      .then((r) => setContacts(r.data.contacts || []))
+      .catch(() => {});
+  }, []);
+
+  // Filter contacts based on search term
+  const filteredContacts = useMemo(() => {
+    if (!contactSearch.trim()) return contacts;
+    const searchLower = contactSearch.toLowerCase();
+    return contacts.filter(
+      (contact) =>
+        contact.name.toLowerCase().includes(searchLower) ||
+        contact.wallet_address.toLowerCase().includes(searchLower)
+    );
+  }, [contacts, contactSearch]);
+  const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     api
@@ -623,10 +664,23 @@ export default function SendMoney() {
     }
   };
 
+  // SEP-7 payment requests pre-fill amount/memo/asset; the user still confirms on the review step.
+  const handleQRScan = (address, payment = {}) => {
+    setForm((prev) => ({
+      ...prev,
+      recipient_address: address,
+      ...(payment.amount && { amount: payment.amount }),
+      ...(payment.memo && { memo: payment.memo }),
+      ...(payment.memo && payment.memo_type && { memo_type: payment.memo_type }),
+      ...(payment.asset_code && { asset: payment.asset_code }),
+    }));
+    if (payment.amount || payment.memo) toast(t('send.qr_prefilled'));
+  };
+
   const handleSignWithLedger = async () => {
     setLoading(true);
     try {
-      const res = await api.post('/payments/build-transaction', {
+      const res = await api.post('/ledger/build', {
         recipient_address: form.recipient_address,
         amount: parseFloat(form.amount),
         asset: form.asset,
@@ -648,13 +702,13 @@ export default function SendMoney() {
     setShowLedgerModal(false);
     setLoading(true);
     try {
-      await api.post('/payments/submit-signed', {
+      await api.post('/ledger/submit', {
         xdr: signedXDR,
         recipient_address: form.recipient_address,
         amount: parseFloat(form.amount),
         asset: form.asset,
         wallet_id: selectedWallet?.id || undefined,
-      });
+      }, { headers: { 'Idempotency-Key': crypto.randomUUID() } });
       toast.success('Payment sent via Ledger!');
       resetForm();
       navigate('/dashboard');
@@ -1564,6 +1618,7 @@ export default function SendMoney() {
             </button>
 
             {!isCrossAsset && (
+            {!isCrossAsset && hasWebUSB() && (
               <button
                 type="button"
                 onClick={handleSignWithLedger}
@@ -1598,6 +1653,25 @@ export default function SendMoney() {
         onClose={() => setShowScanner(false)}
         onScan={(address) => setForm({ ...form, recipient_address: address })}
       />
+      <Suspense fallback={null}>
+        {showLedgerModal && (
+          <LedgerSignModal
+            show={showLedgerModal}
+            onClose={() => setShowLedgerModal(false)}
+            xdr={unsignedXDR}
+            networkPassphrase={ledgerNetworkPassphrase}
+            onSigned={handleLedgerSigned}
+          />
+        )}
+
+        {showScanner && (
+          <QRScanner
+            isOpen={showScanner}
+            onClose={() => setShowScanner(false)}
+            onScan={handleQRScan}
+          />
+        )}
+      </Suspense>
 
       <PINVerificationModal
         isOpen={showPINVerification}
@@ -1642,6 +1716,7 @@ export default function SendMoney() {
                   if (!saveContactName.trim()) return;
                   setSaveContactLoading(true);
                   try {
+                    await api.post('/contacts', { name: saveContactName.trim(), wallet_address: showSaveContactPrompt });
                     await api.post('/wallet/contacts', { name: saveContactName.trim(), wallet_address: showSaveContactPrompt });
                     toast.success('Contact saved!');
                   } catch {
@@ -1664,6 +1739,7 @@ export default function SendMoney() {
                 Skip
               </button>
             </div>
+            </form>
           </div>
         </div>
       )}

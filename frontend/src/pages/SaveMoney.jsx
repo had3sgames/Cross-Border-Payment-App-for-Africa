@@ -4,6 +4,7 @@ import { ArrowLeft, PiggyBank, Clock, Unlock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import api from '../utils/api';
+import useStepUp from '../hooks/useStepUp';
 
 /** Calculate remaining seconds from now until unlockTimestamp (unix seconds). */
 function secondsUntil(unlockTimestamp) {

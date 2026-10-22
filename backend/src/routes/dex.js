@@ -1,9 +1,9 @@
 const router = require('express').Router();
 const { query, body, validationResult } = require('express-validator');
 const authMiddleware = require('../middleware/auth');
+const { requireStepUp } = require('../middleware/requireStepUp');
 const db = require('../db');
 const idempotency = require('../middleware/idempotency');
-const { getOrderbook, executeSwap, getTradeHistory } = require('../services/dex');
 const cache = require('../utils/cache');
 const { parseAssetParam, getOrderbook, executeSwap, getTradeHistory } = require('../services/dex');
 
@@ -87,6 +87,7 @@ router.post('/swap',
   ],
   validate,
   idempotency,
+  requireStepUp,
   async (req, res, next) => {
     try {
       const { sell_asset, sell_amount, buy_asset, slippage_pct, min_received } = req.body;
