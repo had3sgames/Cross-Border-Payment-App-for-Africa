@@ -16,7 +16,7 @@ const logger = require('../utils/logger');
 
 const horizonUrl = process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org';
 const horizonServer = new StellarSdk.Horizon.Server(horizonUrl);
-const sorobanRpc = process.env.SOROBAN_RPC || 'https://soroban-testnet.stellar.org';
+const { rpcUrl: sorobanRpc } = require('../config/soroban');
 
 // Configuration
 const POLL_INTERVAL = parseInt(process.env.CONTRACT_EVENT_POLL_INTERVAL || '30000'); // 30 seconds

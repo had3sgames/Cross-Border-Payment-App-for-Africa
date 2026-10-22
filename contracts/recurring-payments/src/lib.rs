@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
+#[cfg(test)]
 mod test;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -13,6 +14,7 @@ const DEFAULT_MAX_MISSED_EXECUTIONS: u64 = 3;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 #[contracttype]
 pub enum DataKey {
     TokenAddress,
@@ -33,15 +35,19 @@ pub enum DataKey {
 /// Frequency of a recurring payment, expressed in seconds.
 pub type IntervalSecs = u64;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub enum ScheduleStatus {
     Active,
+    /// Stopped by the sender, or auto-cancelled after too many missed windows.
     Cancelled,
     Paused,
+    /// Finished successfully: all `max_executions` payments were made.
+    Completed,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct RecurringSchedule {
     pub id: u64,
@@ -72,7 +78,7 @@ pub struct RecurringSchedule {
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct ScheduleAuthorized {
     pub id: u64,
@@ -85,7 +91,7 @@ pub struct ScheduleAuthorized {
     pub max_executions: u64,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct PaymentExecuted {
     pub id: u64,
@@ -95,27 +101,27 @@ pub struct PaymentExecuted {
     pub executions_completed: u64,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct ScheduleCancelled {
     pub id: u64,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct SchedulePaused {
     pub schedule_id: u64,
     pub paused_at: u64,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct ScheduleResumed {
     pub schedule_id: u64,
     pub next_payment_at: u64,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct AmountUpdated {
     pub schedule_id: u64,
@@ -124,7 +130,7 @@ pub struct AmountUpdated {
     pub updated_by: Address,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct RecipientUpdated {
     pub schedule_id: u64,
@@ -136,14 +142,40 @@ pub struct RecipientUpdated {
 /// Emitted when an execution window (plus grace period) passes without a
 /// successful payment. Also emitted when the caller detects a missed window
 /// by calling `execute_payment` after the grace period has expired.
+#[derive(Debug, Clone)]
+/// Emitted when `execute_payment` finds one or more execution windows whose
+/// grace period expired without a successful payment.
 #[derive(Clone)]
 #[contracttype]
 pub struct PaymentMissed {
     pub schedule_id: u64,
     /// Ledger timestamp at which the miss was recorded.
     pub missed_at: u64,
+    /// Number of windows found missed by this call (can be > 1 when nobody
+    /// executed the schedule for several intervals).
+    pub newly_missed: u64,
     /// Total consecutive misses recorded for this schedule after this event.
     pub total_missed: u64,
+}
+
+/// Emitted when a bounded schedule makes its final payment and becomes
+/// `Completed`.
+#[derive(Clone)]
+#[contracttype]
+pub struct ScheduleCompleted {
+    pub schedule_id: u64,
+    pub executions_completed: u64,
+    pub completed_at: u64,
+}
+
+/// Emitted when a schedule is cancelled automatically because it reached
+/// `max_missed_executions` consecutive missed windows.
+#[derive(Clone)]
+#[contracttype]
+pub struct ScheduleAutoCancelled {
+    pub schedule_id: u64,
+    pub total_missed: u64,
+    pub cancelled_at: u64,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -190,6 +222,11 @@ impl RecurringPaymentsContract {
     ///                             late execution is still accepted (default 3 600).
     /// * `max_missed_executions` — Consecutive misses before auto-cancel (default 3,
     ///                             0 means use contract default).
+    ///
+    /// Authorization lives only as long as the schedule: cancelling it
+    /// revokes execution, pausing halts it, and it ends after
+    /// `max_executions` payments (if > 0), after `max_missed_executions`
+    /// consecutive misses, or when the sender's token allowance lapses.
     ///
     /// Returns the new schedule ID.
     pub fn create_recurring_payment(
@@ -296,22 +333,36 @@ impl RecurringPaymentsContract {
         id
     }
 
-    /// Pre-authorization semantics, replay/expiry rules, and schedule lifecycle:
+    /// Execute a due payment for `schedule_id`. Anyone may call this.
     ///
-    /// - **Authorization vs Schedule Lifetime**: Pre-authorization is tied strictly
-    ///   to the underlying `RecurringSchedule` identified by `schedule_id`. Cancelling the schedule
-    ///   via `cancel_recurring_payment` permanently revokes execution authority; any subsequent
-    ///   `execute_payment` calls will fail with `"schedule is not active"`. Pausing the schedule
-    ///   via `pause_recurring_payment` immediately halts payment execution with `"Schedule is paused"`.
-    ///   There is no separate authorization object that survives or outlives a cancelled or paused schedule.
-    /// - **Replay Protection**: Each payment execution checks timing (`now >= next_payment_at`)
-    ///   and advances `next_payment_at` monotonically by `interval`, preventing double execution
-    ///   or replay attacks within the same interval window.
-    /// - **Authorization Expiry**: Pre-authorization expires when `max_executions` is reached (if > 0),
-    ///   when `max_missed_executions` consecutive missed windows occur (which auto-cancels the schedule),
-    ///   or when the token allowance / approval granted off-chain by the sender expires or is revoked.
+    /// - `now < next_payment_at` → panics "payment not yet due".
+    /// - `now <= next_payment_at + grace_period_secs` → payment executes and
+    ///   `consecutive_misses` resets to 0.
+    /// - Otherwise every window whose grace period has expired counts as a
+    ///   miss (one per interval, not one per call). `next_payment_at` moves to
+    ///   the first window that has not expired, `PaymentMissed` is emitted and
+    ///   the call returns without paying. If the open window is already due,
+    ///   a second call executes it.
+    /// - When `consecutive_misses >= max_missed_executions` the schedule is
+    ///   cancelled and `ScheduleAutoCancelled` is emitted.
+    // Pre-authorization semantics, replay/expiry rules, and schedule lifecycle:
+    //
+    // - Authorization vs schedule lifetime: pre-authorization is tied strictly
+    //   to the `RecurringSchedule` identified by `schedule_id`. Cancelling via
+    //   `cancel_recurring_payment` permanently revokes execution authority
+    //   ("schedule is not active"); pausing via `pause_recurring_payment` halts
+    //   execution ("Schedule is paused"). No separate authorization object
+    //   outlives a cancelled or paused schedule.
+    // - Replay protection: each execution checks `now >= next_payment_at` and
+    //   advances `next_payment_at` monotonically by `interval`.
+    // - Expiry: when `max_executions` is reached (if > 0), when
+    //   `max_missed_executions` consecutive windows are missed (auto-cancel),
+    //   or when the sender's off-chain token allowance expires or is revoked.
+
+    /// Deprecated alias for `create_recurring_payment`; use that instead.
     ///
-    /// Deprecated alias for create_recurring_payment. Use create_recurring_payment instead.
+    /// The schedule's asset is the token configured in `initialize` (USDC),
+    /// with no execution cap and default grace / missed-execution settings.
     #[deprecated]
     pub fn authorize_recurring(
         env: Env,
@@ -322,18 +373,44 @@ impl RecurringPaymentsContract {
     ) -> u64 {
         // Legacy support: default to USDC asset (0-address as placeholder).
         // Uses contract defaults for grace_period_secs and max_missed_executions.
-        let usdc_placeholder = Address::from_contract_id(&env, &[0u8; 32]);
+        // Strkey of the all-zero contract id.
+        let usdc_placeholder = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
+        let token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenAddress)
+            .expect("not initialized");
         Self::create_recurring_payment(
             env,
             sender,
             recipient,
-            usdc_placeholder,
+            token,
             amount,
             interval,
             0,
             DEFAULT_GRACE_PERIOD_SECS,
             DEFAULT_MAX_MISSED_EXECUTIONS,
         )
+    }
+
+    /// Next due date after a successful execution at `now`, kept on the
+    /// original schedule grid (`next_payment_at + k * interval`).
+    ///
+    /// Normally this is just `next_payment_at + interval`. If the execution
+    /// was so late that this is already due (only possible when the grace
+    /// period is at least one interval), it skips ahead to the first grid
+    /// slot after `now`, so one call never unlocks a burst of back-to-back
+    /// payments.
+    fn next_anchored_due(schedule: &RecurringSchedule, now: u64) -> u64 {
+        let mut next = schedule.next_payment_at + schedule.interval;
+        if next <= now {
+            let behind = now - next;
+            next += (behind / schedule.interval + 1) * schedule.interval;
+        }
+        next
     }
 
     /// Execute a due payment for `schedule_id`.
@@ -346,12 +423,9 @@ impl RecurringPaymentsContract {
     /// - `now > next_payment_at + grace_period_secs`      → miss recorded, `consecutive_misses` incremented by 1,
     ///   `PaymentMissed` emitted, schedule state persisted, and function returns early.
     ///
-    /// Consecutive Miss Threshold & Auto-Cancellation:
-    /// - When `consecutive_misses >= max_missed_executions`, the schedule is automatically cancelled
-    ///   (`status` set to `ScheduleStatus::Cancelled`).
-    /// - If `consecutive_misses < max_missed_executions`, the schedule's `next_payment_at` is skipped
-    ///   forward across elapsed intervals to prevent a deadlock, remaining `Active` until the next window.
-    /// - A subsequent successful execution before reaching `max_missed_executions` resets the consecutive miss counter to 0.
+    /// Auto-cancellation: once `consecutive_misses >= max_missed_executions` the schedule is
+    /// cancelled; below that, `next_payment_at` skips past elapsed intervals and the schedule
+    /// stays `Active`. A successful execution resets the miss counter to 0.
     pub fn execute_payment(env: Env, executor: Address, schedule_id: u64) {
         executor.require_auth();
 
@@ -377,19 +451,22 @@ impl RecurringPaymentsContract {
         // ── Grace period check ────────────────────────────────────────────────
         let grace_deadline = schedule.next_payment_at + schedule.grace_period_secs;
         if now > grace_deadline {
-            // The execution window AND grace period have both passed.
-            // Record the miss, emit the event, and potentially auto-cancel.
-            schedule.consecutive_misses += 1;
-            let total_missed = schedule.consecutive_misses;
+            // Count every window whose grace period has expired: window k is
+            // due at next_payment_at + k * interval and expired if its
+            // deadline (due + grace) is before `now`. Window 0 is known to
+            // have expired, so newly_missed >= 1.
+            let newly_missed = (now - grace_deadline - 1) / schedule.interval + 1;
+            let total_missed = schedule.consecutive_misses.saturating_add(newly_missed);
+            schedule.consecutive_misses = total_missed;
 
-            // Advance next_payment_at so the schedule does not get permanently stuck.
-            // Skip forward by enough intervals to land in the future.
-            let elapsed = now - schedule.next_payment_at;
-            let intervals_missed = elapsed / schedule.interval + 1;
-            schedule.next_payment_at += intervals_missed * schedule.interval;
+            // Move to the first window that has not expired yet.
+            schedule.next_payment_at = newly_missed
+                .checked_mul(schedule.interval)
+                .and_then(|skip| schedule.next_payment_at.checked_add(skip))
+                .expect("next_payment_at overflow");
 
-            // Auto-cancel if the consecutive miss threshold is reached.
-            if total_missed >= schedule.max_missed_executions {
+            let auto_cancelled = total_missed >= schedule.max_missed_executions;
+            if auto_cancelled {
                 schedule.status = ScheduleStatus::Cancelled;
             }
 
@@ -406,9 +483,21 @@ impl RecurringPaymentsContract {
                 PaymentMissed {
                     schedule_id,
                     missed_at: now,
+                    newly_missed,
                     total_missed,
                 },
             );
+
+            if auto_cancelled {
+                env.events().publish(
+                    (Symbol::new(&env, "ScheduleAutoCancelled"),),
+                    ScheduleAutoCancelled {
+                        schedule_id,
+                        total_missed,
+                        cancelled_at: now,
+                    },
+                );
+            }
 
             return;
         }
@@ -466,12 +555,20 @@ impl RecurringPaymentsContract {
             .persistent()
             .set(&DataKey::MissedExecutions(schedule_id), &0u64);
 
-        schedule.next_payment_at = now + schedule.interval;
+        // Anchor the next due date to the schedule, not to when this call
+        // happened. Using `now + interval` made every late (in-grace)
+        // execution push the schedule later, so a "1st of the month" payment
+        // drifted by days over a year and disagreed with the off-chain
+        // calendar.
+        schedule.next_payment_at = Self::next_anchored_due(&schedule, now);
         schedule.executions_completed += 1;
 
-        // Cancel schedule if max executions reached
-        if schedule.max_executions > 0 && schedule.executions_completed >= schedule.max_executions {
-            schedule.status = ScheduleStatus::Cancelled;
+        // A bounded schedule that has made all its payments is Completed,
+        // not Cancelled, so clients can tell success from cancellation.
+        let completed = schedule.max_executions > 0
+            && schedule.executions_completed >= schedule.max_executions;
+        if completed {
+            schedule.status = ScheduleStatus::Completed;
         }
 
         env.storage()
@@ -488,6 +585,17 @@ impl RecurringPaymentsContract {
                 executions_completed: schedule.executions_completed,
             },
         );
+
+        if completed {
+            env.events().publish(
+                (Symbol::new(&env, "ScheduleCompleted"),),
+                ScheduleCompleted {
+                    schedule_id,
+                    executions_completed: schedule.executions_completed,
+                    completed_at: now,
+                },
+            );
+        }
     }
 
     /// Cancel a recurring schedule. Only the original sender may cancel.
@@ -506,6 +614,9 @@ impl RecurringPaymentsContract {
         }
         if schedule.status == ScheduleStatus::Cancelled {
             panic!("schedule is already cancelled");
+        }
+        if schedule.status == ScheduleStatus::Completed {
+            panic!("schedule is already completed");
         }
 
         schedule.status = ScheduleStatus::Cancelled;
@@ -594,24 +705,12 @@ impl RecurringPaymentsContract {
         );
     }
 
-    /// Deprecated alias for cancel_recurring_payment. Use cancel_recurring_payment instead.
-    #[deprecated]
-    pub fn cancel_recurring(env: Env, sender: Address, schedule_id: u64) {
-        Self::cancel_recurring_payment(env, sender, schedule_id)
-    }
-
     /// Read a schedule by ID.
     pub fn get_schedule(env: Env, schedule_id: u64) -> RecurringSchedule {
         env.storage()
             .persistent()
             .get(&DataKey::Schedule(schedule_id))
             .expect("schedule not found")
-    }
-
-    /// Deprecated alias for get_schedule. Use get_schedule instead.
-    #[deprecated]
-    pub fn get_recurring_payment(env: Env, schedule_id: u64) -> RecurringSchedule {
-        Self::get_schedule(env, schedule_id)
     }
 
     /// Update the payment amount for a recurring schedule. Only the sender may update.
@@ -634,6 +733,9 @@ impl RecurringPaymentsContract {
         }
         if schedule.status == ScheduleStatus::Cancelled {
             panic!("cannot update cancelled schedule");
+        }
+        if schedule.status == ScheduleStatus::Completed {
+            panic!("cannot update completed schedule");
         }
 
         let old_amount = schedule.amount;
@@ -678,6 +780,9 @@ impl RecurringPaymentsContract {
         }
         if schedule.status == ScheduleStatus::Cancelled {
             panic!("cannot update cancelled schedule");
+        }
+        if schedule.status == ScheduleStatus::Completed {
+            panic!("cannot update completed schedule");
         }
 
         let old_recipient = schedule.recipient.clone();
@@ -748,14 +853,6 @@ impl RecurringPaymentsContract {
         result
     }
 
-    /// Returns the full schedule struct for a given ID.
-    pub fn get_schedule_by_id(env: Env, schedule_id: u64) -> RecurringSchedule {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Schedule(schedule_id))
-            .expect("schedule not found")
-    }
-
     /// Returns paginated IDs of schedules with Active status.
     ///
     /// # Arguments
@@ -803,3 +900,6 @@ impl RecurringPaymentsContract {
         next
     }
 }
+
+mod governance;
+pub use governance::{CONTRACT_VERSION, UPGRADE_TIMELOCK_SECS};

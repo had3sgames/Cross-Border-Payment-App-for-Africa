@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const Sentry = require('@sentry/node');
 const db = require('../db');
 const { isJtiBlacklisted } = require('../controllers/sessionController');
+const logger = require('../utils/logger');
+const audit = require('../services/audit');
 
 function maskWalletAddress(address) {
   if (!address || address.length < 8) return address;
@@ -30,7 +32,7 @@ module.exports = async function authMiddleware(req, res, next) {
     
     // Check if user account is suspended
     const { rows } = await db.query(
-      'SELECT is_suspended, suspension_reason FROM users WHERE id = $1',
+      'SELECT is_suspended, suspension_reason, role FROM users WHERE id = $1',
       [payload.userId]
     );
     
@@ -46,7 +48,22 @@ module.exports = async function authMiddleware(req, res, next) {
       });
     }
     
-    req.user = payload;
+    // Authorize from the DB-backed role; the JWT claim is only a hint (#1303)
+    const dbRole = rows[0].role;
+    if (payload.role !== dbRole) {
+      logger.warn('JWT role claim differs from database role', {
+        userId: payload.userId,
+        tokenRole: payload.role,
+        dbRole,
+      });
+      audit.auditLog({ ...req, user: payload }, 'role_change_detected', {
+        type: 'user',
+        id: payload.userId,
+        oldValue: { role: payload.role ?? null },
+        newValue: { role: dbRole },
+      });
+    }
+    req.user = { ...payload, role: dbRole };
     Sentry.setUser({
       id: req.user.userId,
       wallet: maskWalletAddress(req.user.walletAddress),

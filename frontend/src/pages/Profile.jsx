@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
+import ImportContactsModal from '../components/ImportContactsModal';
 import {
   LogOut,
   Mail,
@@ -88,6 +89,7 @@ export default function Profile() {
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(true);
   const [showAddContact, setShowAddContact] = useState(false);
+  const [showImportContacts, setShowImportContacts] = useState(false);
   const [newContact, setNewContact] = useState({
     name: '',
     wallet_address: '',
@@ -330,7 +332,7 @@ export default function Profile() {
   React.useEffect(() => {
     const fetchContacts = async () => {
       try {
-        const res = await api.get('/wallet/contacts');
+        const res = await api.get('/contacts');
         setContacts(res.data.contacts || []);
       } catch {
         toast.error('Failed to load contacts');
@@ -439,7 +441,7 @@ export default function Profile() {
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
-      const res = await api.post('/wallet/contacts', { ...newContact, tags });
+      const res = await api.post('/contacts', { ...newContact, tags });
       setContacts([...contacts, res.data.contact]);
       setNewContact({
         name: '',
@@ -460,7 +462,7 @@ export default function Profile() {
     const { id } = deleteContactPending;
     setDeleteContactPending(null);
     try {
-      await api.delete(`/wallet/contacts/${id}`);
+      await api.delete(`/contacts/${id}`);
       setContacts(contacts.filter((c) => c.id !== id));
       toast.success('Contact deleted');
     } catch {
@@ -922,13 +924,33 @@ export default function Profile() {
       <div className="bg-gray-900 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-white">{t('profile.frequent_contacts')}</h3>
-          <button
-            onClick={() => setShowAddContact(!showAddContact)}
-            className="text-primary-500 hover:text-primary-400 flex items-center gap-1 text-sm"
-          >
-            <Plus size={16} /> {t('common.add')}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowImportContacts(true)}
+              className="text-primary-500 hover:text-primary-400 text-sm"
+            >
+              {t('contacts_import.open')}
+            </button>
+            <button
+              onClick={() => setShowAddContact(!showAddContact)}
+              className="text-primary-500 hover:text-primary-400 flex items-center gap-1 text-sm"
+            >
+              <Plus size={16} /> {t('common.add')}
+            </button>
+          </div>
         </div>
+
+        <ImportContactsModal
+          isOpen={showImportContacts}
+          onClose={() => setShowImportContacts(false)}
+          onImported={() =>
+            api
+              .get('/wallet/contacts')
+              .then((res) => setContacts(res.data.contacts || []))
+              .catch(() => {})
+          }
+        />
 
         {showAddContact && (
           <form onSubmit={addContact} className="mb-4 space-y-2 bg-gray-800 rounded-xl p-3">

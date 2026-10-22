@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import api from '../utils/api';
 import { CURRENCIES, truncateAddress } from '../utils/currency';
 import { validateStellarAddress } from '../utils/validation';
+import useStepUp from '../hooks/useStepUp';
 
 const SINGLE_TRANSFER_LIMIT = 10000;
 // Matches the Soroban batch_create_escrow contract hard-cap and BE-010 server-side cap
@@ -160,6 +161,7 @@ GXYZ234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCD,250.75,Another example`;
 
 export default function BatchPayment() {
   const navigate = useNavigate();
+  const { requestStepUp, stepUpModal } = useStepUp();
   const [asset, setAsset] = useState('XLM');
   const [memo, setMemo] = useState('');
   const [memoType, setMemoType] = useState('text');
@@ -346,8 +348,11 @@ export default function BatchPayment() {
       return;
     }
 
-    setSubmitting(true);
     try {
+      const stepUpToken = await requestStepUp();
+      if (!stepUpToken) return;
+      setSubmitting(true);
+
       const payload = {
         asset,
         recipients: validRecipients.map((recipient) => ({
@@ -361,7 +366,9 @@ export default function BatchPayment() {
         payload.memo_type = memoType;
       }
 
-      const response = await api.post('/payments/batch', payload);
+      const response = await api.post('/payments/batch', payload, {
+        headers: { 'X-Step-Up-Token': stepUpToken },
+      });
       const data = response.data;
       setResults(data);
       toast.success(data.message || 'Batch payment submitted');
@@ -735,6 +742,7 @@ export default function BatchPayment() {
           </div>
         </div>
       )}
+      {stepUpModal}
     </div>
   );
 }

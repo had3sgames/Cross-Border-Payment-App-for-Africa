@@ -3,7 +3,7 @@
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env, IntoVal, Symbol, Val,
+    vec, Address, Env, IntoVal, Symbol, Val,
 };
 
 use crate::{
@@ -17,11 +17,13 @@ use crate::{
 fn setup() -> (Env, FeeDistributorContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register_contract(None, FeeDistributorContract);
+    let id = env.register(FeeDistributorContract, ());
     let client = FeeDistributorContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let usdc_id = env.register_stellar_asset_contract_v2(admin.clone()).address();
     client.initialize(&admin, &0);
+    // SC-132: deposit_fee only accepts allow-listed tokens.
+    client.add_fee_token(&usdc_id);
     (env, client, admin, usdc_id)
 }
 
@@ -31,11 +33,13 @@ fn setup_with_split(
 ) -> (Env, FeeDistributorContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register_contract(None, FeeDistributorContract);
+    let id = env.register(FeeDistributorContract, ());
     let client = FeeDistributorContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     let usdc_id = env.register_stellar_asset_contract_v2(admin.clone()).address();
     client.initialize(&admin, &split_bps);
+    // SC-132: deposit_fee only accepts allow-listed tokens.
+    client.add_fee_token(&usdc_id);
     (env, client, admin, usdc_id)
 }
 
@@ -126,14 +130,14 @@ fn test_deposit_fee_with_source_emits_event() {
     client.deposit_fee(&depositor, &usdc_id, &500_0000000, &Some(source.clone()));
 
     let event_name: Val = Symbol::new(&env, "FeeDeposited").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let deposit_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(deposit_event.is_some(), "FeeDeposited event not emitted");
 
     let (_, _, data) = deposit_event.unwrap();
-    let payload: EvtFeeDeposited = soroban_sdk::from_val(&env, data);
+    let payload: EvtFeeDeposited = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.depositor, depositor);
     assert_eq!(payload.token, usdc_id);
     assert_eq!(payload.amount, 500_0000000);
@@ -148,14 +152,14 @@ fn test_deposit_fee_without_source_has_none() {
     client.deposit_fee(&depositor, &usdc_id, &100_0000000, &None);
 
     let event_name: Val = Symbol::new(&env, "FeeDeposited").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let deposit_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(deposit_event.is_some());
 
     let (_, _, data) = deposit_event.unwrap();
-    let payload: EvtFeeDeposited = soroban_sdk::from_val(&env, data);
+    let payload: EvtFeeDeposited = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.source, None);
 }
 
@@ -201,7 +205,7 @@ fn test_withdraw_fees_multiple_times() {
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not admin")]
+#[should_panic(expected = "unauthorized")]
 fn test_withdraw_fees_non_admin_panics() {
     let (env, client, _, usdc_id) = setup();
     let depositor = Address::generate(&env);
@@ -249,14 +253,14 @@ fn test_withdraw_fees_event_includes_admin_amount_and_timestamp() {
     client.withdraw_fees(&admin, &usdc_id, &1_000_0000000);
 
     let event_name: Val = Symbol::new(&env, "FeesWithdrawn").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let withdrawal_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(withdrawal_event.is_some(), "FeesWithdrawn event not emitted");
 
     let (_, _, data) = withdrawal_event.unwrap();
-    let payload: EvtFeesWithdrawn = soroban_sdk::from_val(&env, data);
+    let payload: EvtFeesWithdrawn = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.admin, admin);
     assert_eq!(payload.token, usdc_id);
     assert_eq!(payload.amount, 1_000_0000000);
@@ -289,7 +293,7 @@ fn test_get_accumulated_fees_reflects_deposits_and_withdrawals() {
 fn test_initialize_split_bps_above_max_panics() {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register_contract(None, FeeDistributorContract);
+    let id = env.register(FeeDistributorContract, ());
     let client = FeeDistributorContractClient::new(&env, &id);
     let admin = Address::generate(&env);
     // 5001 exceeds the 5000 cap and must panic.
@@ -364,67 +368,73 @@ fn test_deposit_fee_split_accumulates_across_multiple_deposits() {
 // ── withdraw_agent_pool ───────────────────────────────────────────────────────
 
 #[test]
-fn test_withdraw_agent_pool_transfers_to_admin() {
+fn test_distribute_agent_pool_transfers_to_agent() {
     let (env, client, admin, usdc_id) = setup_with_split(2000);
     let depositor = Address::generate(&env);
+    let agent = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
     client.deposit_fee(&depositor, &usdc_id, &1_000_0000000, &None);
 
     // Agent pool = 200_0000000 (20%).
-    client.withdraw_agent_pool(&admin, &usdc_id, &200_0000000);
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent.clone(), 200_0000000)]);
 
     assert_eq!(client.get_agent_pool_fees(&usdc_id), 0);
-    assert_eq!(TokenClient::new(&env, &usdc_id).balance(&admin), 200_0000000);
+    assert_eq!(TokenClient::new(&env, &usdc_id).balance(&agent), 200_0000000);
+    assert_eq!(TokenClient::new(&env, &usdc_id).balance(&admin), 0);
 }
 
 #[test]
-fn test_withdraw_agent_pool_partial() {
+fn test_distribute_agent_pool_partial() {
     let (env, client, admin, usdc_id) = setup_with_split(2000);
     let depositor = Address::generate(&env);
+    let agent = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
     client.deposit_fee(&depositor, &usdc_id, &1_000_0000000, &None);
 
-    client.withdraw_agent_pool(&admin, &usdc_id, &100_0000000);
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent.clone(), 100_0000000)]);
 
     assert_eq!(client.get_agent_pool_fees(&usdc_id), 100_0000000);
-    assert_eq!(TokenClient::new(&env, &usdc_id).balance(&admin), 100_0000000);
+    assert_eq!(TokenClient::new(&env, &usdc_id).balance(&agent), 100_0000000);
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not admin")]
-fn test_withdraw_agent_pool_non_admin_panics() {
+#[should_panic(expected = "unauthorized")]
+fn test_distribute_agent_pool_non_admin_panics() {
     let (env, client, _, usdc_id) = setup_with_split(2000);
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
     client.deposit_fee(&depositor, &usdc_id, &1_000_0000000, &None);
     let impostor = Address::generate(&env);
-    client.withdraw_agent_pool(&impostor, &usdc_id, &100_0000000);
+    client.distribute_agent_pool(&impostor, &usdc_id, &vec![&env, (impostor.clone(), 100_0000000)]);
 }
 
 #[test]
 #[should_panic(expected = "insufficient agent pool fees")]
-fn test_withdraw_agent_pool_exceeds_balance_panics() {
+fn test_distribute_agent_pool_exceeds_balance_panics() {
     let (env, client, admin, usdc_id) = setup_with_split(2000);
     let depositor = Address::generate(&env);
+    let agent = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
     client.deposit_fee(&depositor, &usdc_id, &1_000_0000000, &None);
 
-    // Pool holds 200_0000000; trying to withdraw 1 more must panic.
-    client.withdraw_agent_pool(&admin, &usdc_id, &200_0000001);
+    // Pool holds 200_0000000; trying to distribute 1 more must panic.
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent, 200_0000001)]);
 }
 
 #[test]
 #[should_panic(expected = "insufficient agent pool fees")]
-fn test_withdraw_agent_pool_when_empty_panics() {
-    let (_, client, admin, usdc_id) = setup_with_split(0);
-    client.withdraw_agent_pool(&admin, &usdc_id, &1);
+fn test_distribute_agent_pool_when_empty_panics() {
+    let (env, client, admin, usdc_id) = setup_with_split(0);
+    let agent = Address::generate(&env);
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent, 1)]);
 }
 
 #[test]
 #[should_panic(expected = "amount must be positive")]
-fn test_withdraw_agent_pool_zero_amount_panics() {
-    let (_, client, admin, usdc_id) = setup_with_split(2000);
-    client.withdraw_agent_pool(&admin, &usdc_id, &0);
+fn test_distribute_agent_pool_zero_amount_panics() {
+    let (env, client, admin, usdc_id) = setup_with_split(2000);
+    let agent = Address::generate(&env);
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent, 0)]);
 }
 
 // ── update_split ──────────────────────────────────────────────────────────────
@@ -456,14 +466,14 @@ fn test_update_split_emits_split_updated_event() {
     client.update_split(&admin, &2500);
 
     let event_name: Val = Symbol::new(&env, "SplitUpdated").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let split_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(split_event.is_some(), "SplitUpdated event not emitted");
 
     let (_, _, data) = split_event.unwrap();
-    let payload: EvtSplitUpdated = soroban_sdk::from_val(&env, data);
+    let payload: EvtSplitUpdated = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.old_split_bps, 1000);
     assert_eq!(payload.new_split_bps, 2500);
 }
@@ -483,7 +493,7 @@ fn test_update_split_to_max_boundary_does_not_panic() {
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not admin")]
+#[should_panic(expected = "unauthorized")]
 fn test_update_split_non_admin_panics() {
     let (env, client, _, _) = setup_with_split(0);
     let impostor = Address::generate(&env);
@@ -500,6 +510,7 @@ fn test_deposit_and_withdraw_xlm() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &xlm_id, &depositor, 500_0000000);
@@ -522,6 +533,7 @@ fn test_xlm_and_usdc_accumulators_are_independent() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
@@ -545,6 +557,7 @@ fn test_two_asset_selective_withdrawal() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
@@ -568,6 +581,7 @@ fn test_two_asset_both_withdrawals() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 500_0000000);
@@ -604,6 +618,7 @@ fn test_over_withdrawal_xlm_panics() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &xlm_id, &depositor, 50_0000000);
@@ -620,6 +635,7 @@ fn test_over_withdrawal_wrong_token_panics() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 100_0000000);
@@ -659,6 +675,7 @@ fn test_get_all_accumulated_fees_two_tokens() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 300_0000000);
@@ -688,6 +705,7 @@ fn test_get_all_accumulated_fees_excludes_fully_withdrawn_tokens() {
     let xlm_id = env
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
+    client.add_fee_token(&xlm_id);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 100_0000000);
@@ -820,14 +838,14 @@ fn test_pause_emits_contract_paused_event() {
     client.pause(&admin);
 
     let event_name: Val = Symbol::new(&env, "ContractPaused").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let pause_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(pause_event.is_some(), "ContractPaused event not emitted");
 
     let (_, _, data) = pause_event.unwrap();
-    let payload: crate::EvtContractPaused = soroban_sdk::from_val(&env, data);
+    let payload: crate::EvtContractPaused = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.admin, admin);
     assert_eq!(payload.paused_at, pause_at);
 }
@@ -842,20 +860,20 @@ fn test_unpause_emits_contract_unpaused_event() {
     client.unpause(&admin);
 
     let event_name: Val = Symbol::new(&env, "ContractUnpaused").into_val(&env);
-    let events = env.events().all();
+    let events = all_events(&env);
     let unpause_event = events.iter().find(|(_, topics, _)| {
-        topics.iter().any(|t| t == &event_name)
+        topics.iter().any(|t| val_eq(&env, &t, &event_name))
     });
     assert!(unpause_event.is_some(), "ContractUnpaused event not emitted");
 
     let (_, _, data) = unpause_event.unwrap();
-    let payload: crate::EvtContractUnpaused = soroban_sdk::from_val(&env, data);
+    let payload: crate::EvtContractUnpaused = soroban_sdk::FromVal::from_val(&env, &data);
     assert_eq!(payload.admin, admin);
     assert_eq!(payload.unpaused_at, unpause_at);
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not admin")]
+#[should_panic(expected = "unauthorized")]
 fn test_pause_non_admin_panics() {
     let (env, client, _, _) = setup();
     let impostor = Address::generate(&env);
@@ -863,7 +881,7 @@ fn test_pause_non_admin_panics() {
 }
 
 #[test]
-#[should_panic(expected = "unauthorized: caller is not admin")]
+#[should_panic(expected = "unauthorized")]
 fn test_unpause_non_admin_panics() {
     let (env, client, admin, _) = setup();
     client.pause(&admin);
@@ -905,8 +923,11 @@ fn test_get_all_accumulated_fees_pagination_returns_correct_page() {
     let (env, client, admin, usdc_id) = setup();
 
     let tok2 = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    client.add_fee_token(&tok2);
     let tok3 = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    client.add_fee_token(&tok3);
     let tok4 = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    client.add_fee_token(&tok4);
 
     let depositor = Address::generate(&env);
     for tok in [&usdc_id, &tok2, &tok3, &tok4] {
@@ -972,10 +993,11 @@ fn test_get_all_accumulated_fees_start_beyond_end_returns_empty() {
 
 #[test]
 fn test_get_token_list_len_reflects_registered_tokens() {
-    // get_token_list_len should match the number of distinct deposited tokens.
+    // SC-132: get_token_list_len counts allow-listed tokens; setup() already
+    // allow-lists USDC.
     let (env, client, admin, usdc_id) = setup();
 
-    assert_eq!(client.get_token_list_len(), 0);
+    assert_eq!(client.get_token_list_len(), 1);
 
     let depositor = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 100_0000000);
@@ -983,6 +1005,7 @@ fn test_get_token_list_len_reflects_registered_tokens() {
     assert_eq!(client.get_token_list_len(), 1);
 
     let tok2 = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    client.add_fee_token(&tok2);
     mint(&env, &tok2, &depositor, 100_0000000);
     client.deposit_fee(&depositor, &tok2, &100_0000000, &None);
     assert_eq!(client.get_token_list_len(), 2);
@@ -1042,25 +1065,56 @@ fn test_pause_blocks_withdraw_fees() {
 }
 
 #[test]
-fn test_withdraw_agent_pool_not_blocked_by_pause() {
-    // withdraw_agent_pool deliberately has no Paused check (by design —
-    // agent-pool withdrawals must remain available to honour pending agent
-    // payouts even during an incident that warrants pausing new deposits).
-    // This test locks in that deliberate omission as regression coverage
-    // (SC-019 acceptance criterion: "deliberate decision, not an oversight").
+#[should_panic(expected = "Contract is paused")]
+fn test_distribute_agent_pool_blocked_by_pause() {
+    // SC-131: every outbound transfer, including agent-pool payouts, panics
+    // while the contract is paused.
     let (env, client, admin, usdc_id) = setup_with_split(2000);
     let depositor = Address::generate(&env);
+    let agent = Address::generate(&env);
     mint(&env, &usdc_id, &depositor, 1_000_0000000);
 
-    // Build up agent pool balance while unpaused.
     client.deposit_fee(&depositor, &usdc_id, &1_000_0000000, &None);
-    // Agent pool = 200_0000000 (20% of 1_000_0000000 with split 2000 bps).
     assert_eq!(client.get_agent_pool_fees(&usdc_id), 200_0000000);
 
     client.pause(&admin);
+    client.distribute_agent_pool(&admin, &usdc_id, &vec![&env, (agent, 200_0000000)]);
+}
 
-    // withdraw_agent_pool must NOT panic when contract is paused — this is
-    // intentional: agent-pool withdrawals are not gated by the pause flag.
-    client.withdraw_agent_pool(&admin, &usdc_id, &200_0000000);
-    assert_eq!(client.get_agent_pool_fees(&usdc_id), 0);
+/// Events emitted so far, as `(contract, topics, data)` tuples.
+///
+/// soroban-sdk 23+ returns events in XDR form; this converts them back to
+/// host values so tests can decode payloads with `FromVal`.
+#[allow(dead_code)]
+fn all_events(
+    env: &soroban_sdk::Env,
+) -> soroban_sdk::Vec<(
+    soroban_sdk::Address,
+    soroban_sdk::Vec<soroban_sdk::Val>,
+    soroban_sdk::Val,
+)> {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{xdr, Address, TryFromVal, Val, Vec};
+    let mut out = Vec::new(env);
+    for e in env.events().all().events() {
+        let xdr::ContractEventBody::V0(body) = &e.body;
+        let Some(contract_id) = e.contract_id.clone() else {
+            continue;
+        };
+        let contract =
+            Address::try_from_val(env, &xdr::ScAddress::Contract(contract_id)).unwrap();
+        let mut topics: Vec<Val> = Vec::new(env);
+        for t in body.topics.iter() {
+            topics.push_back(Val::try_from_val(env, t).unwrap());
+        }
+        out.push_back((contract, topics, Val::try_from_val(env, &body.data).unwrap()));
+    }
+    out
+}
+
+/// Compares two host values structurally (`Val` has no `PartialEq`).
+#[allow(dead_code)]
+fn val_eq(env: &soroban_sdk::Env, a: &soroban_sdk::Val, b: &soroban_sdk::Val) -> bool {
+    use soroban_sdk::{xdr::ScVal, TryFromVal};
+    ScVal::try_from_val(env, a).ok() == ScVal::try_from_val(env, b).ok()
 }

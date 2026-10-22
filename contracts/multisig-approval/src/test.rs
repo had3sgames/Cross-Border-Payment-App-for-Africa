@@ -16,7 +16,7 @@ fn setup(quorum: u32, n_approvers: usize) -> (Env, Address, soroban_sdk::Vec<Add
     for _ in 0..n_approvers {
         approvers.push_back(Address::generate(&env));
     }
-    let contract_id = env.register_contract(None, MultisigContract);
+    let contract_id = env.register(MultisigContract, ());
     MultisigContractClient::new(&env, &contract_id).initialize(&admin, &approvers, &quorum);
     (env, contract_id, approvers, admin)
 }
@@ -58,7 +58,7 @@ fn test_quorum_zero_panics() {
     let a1 = Address::generate(&env);
     let mut v = soroban_sdk::Vec::new(&env);
     v.push_back(a1);
-    let contract_id = env.register_contract(None, MultisigContract);
+    let contract_id = env.register(MultisigContract, ());
     MultisigContractClient::new(&env, &contract_id).initialize(&admin, &v, &0);
 }
 
@@ -71,7 +71,7 @@ fn test_quorum_exceeds_approvers_panics() {
     let a1 = Address::generate(&env);
     let mut v = soroban_sdk::Vec::new(&env);
     v.push_back(a1);
-    let contract_id = env.register_contract(None, MultisigContract);
+    let contract_id = env.register(MultisigContract, ());
     MultisigContractClient::new(&env, &contract_id).initialize(&admin, &v, &2);
 }
 
@@ -790,7 +790,7 @@ fn test_initialize_quorum_zero_panics() {
     let a1 = Address::generate(&env);
     let mut v = soroban_sdk::Vec::new(&env);
     v.push_back(a1);
-    let contract_id = env.register_contract(None, MultisigContract);
+    let contract_id = env.register(MultisigContract, ());
     MultisigContractClient::new(&env, &contract_id).initialize(&admin, &v, &0);
 }
 
@@ -807,7 +807,7 @@ fn test_quorum_greater_than_approver_count_panics() {
     for _ in 0..3 {
         approvers.push_back(Address::generate(&env));
     }
-    let contract_id = env.register_contract(None, MultisigContract);
+    let contract_id = env.register(MultisigContract, ());
     // 3 approvers, quorum=4 — impossible to reach
     MultisigContractClient::new(&env, &contract_id).initialize(&admin, &approvers, &4);
 }
@@ -985,8 +985,8 @@ fn test_proposal_hash_differs_across_contract_instances() {
     for _ in 0..3 {
         approvers.push_back(Address::generate(&env));
     }
-    let c1 = env.register_contract(None, MultisigContract);
-    let c2 = env.register_contract(None, MultisigContract);
+    let c1 = env.register(MultisigContract, ());
+    let c2 = env.register(MultisigContract, ());
     let client1 = MultisigContractClient::new(&env, &c1);
     let client2 = MultisigContractClient::new(&env, &c2);
     client1.initialize(&admin, &approvers, &2);

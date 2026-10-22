@@ -13,7 +13,8 @@
     "sign_out": "Fita",
     "no_transactions": "Ba a sami ma'amaloli ba",
     "see_all": "Duba duka",
-    "rates_disclaimer": "Kudaden canji suna kusa da gaske kuma za a iya adana su. Farashin na ainihi yana sabunta kowane minti."
+    "rates_disclaimer": "Kudaden canji suna kusa da gaske kuma za a iya adana su. Farashin na ainihi yana sabunta kowane minti.",
+    "close": "Rufe"
   },
   "welcome": {
     "tagline": "Biyan kuɗi na ƙetare iyaka da sauri da aminci ta hanyar Stellar blockchain",
@@ -140,7 +141,9 @@
     "review": "Duba Biyan Kuɗi",
     "confirm_send": "Tabbatar da Aika",
     "success": "An aika biyan kuɗi!",
-    "error": "Ma'amala ta kasa"
+    "error": "Ma'amala ta kasa",
+    "qr_unsupported_uri": "Wannan lambar QR buƙatar ma'amala ce, ba buƙatar biyan kuɗi ba. Lambobin QR na biyan kuɗi kawai ake tallafawa.",
+    "qr_prefilled": "An cike bayanan biyan kuɗi daga lambar QR — da fatan za a duba kafin aikawa."
   },
   "auth": {
     "setup_pin_title": "Saita PIN na Ma'amala",
@@ -199,5 +202,22 @@
     "contact_error": "Ƙara tuntuɓi ya kasa",
     "address_copied": "An kwafi adireshi!",
     "language": "Harshe"
+  },
+  "contacts_import": {
+    "open": "Shigo da CSV",
+    "title": "Shigo da lambobin sadarwa ta CSV",
+    "description": "Loda fayil ɗin CSV don ƙara masu karɓa da yawa a lokaci ɗaya. Fara sauke samfuri don samun kanun ginshiƙai daidai.",
+    "download_template": "↓ Sauke samfurin CSV",
+    "select_file": "Zaɓi fayil ɗin CSV (mafi girma 5 MB)",
+    "file_too_large": "Fayil ɗin ya yi girma sosai. Mafi girman girma shine 5 MB.",
+    "template_failed": "An kasa sauke samfuri. Da fatan za a sake gwadawa.",
+    "no_file": "Da fatan za a zaɓi fayil ɗin CSV don shigo da shi.",
+    "upload_failed": "An kasa shigo da lambobin sadarwa. Duba tsarin fayil ɗin.",
+    "upload": "Loda kuma shigo da",
+    "uploading": "Ana lodawa…",
+    "imported": "An shigo da: {{count}}",
+    "skipped": "An tsallake kwafi: {{count}}",
+    "failed": "Sun kasa: {{count}}",
+    "row_error": "Layi {{row}}: {{error}}"
   }
 }

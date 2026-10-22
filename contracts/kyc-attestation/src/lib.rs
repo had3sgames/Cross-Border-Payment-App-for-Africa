@@ -30,11 +30,12 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Symbol};
 
+#[cfg(test)]
 mod test;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[contracttype]
 #[repr(u32)]
 pub enum KycTier {
@@ -43,6 +44,7 @@ pub enum KycTier {
     Business = 2,
 }
 
+#[derive(Debug)]
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -54,7 +56,7 @@ pub enum DataKey {
 // ── Domain types ──────────────────────────────────────────────────────────────
 
 /// On-chain KYC attestation record.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct Attestation {
     /// SHA-256 hash of the off-chain KYC document bundle (hex-encoded bytes).
@@ -76,14 +78,14 @@ pub struct Attestation {
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct AttestationRevoked {
     pub user: Address,
     pub tier: KycTier,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[contracttype]
 pub struct BatchRevocationCompleted {
     pub count: u32,
@@ -247,7 +249,7 @@ impl KycAttestationContract {
         match env
             .storage()
             .persistent()
-            .get::<_, Attestation>(DataKey::TieredAttestation(user, tier))
+            .get::<_, Attestation>(&DataKey::TieredAttestation(user, tier))
         {
             Some(record) => {
                 if record.revoked_at != 0 {
@@ -265,6 +267,46 @@ impl KycAttestationContract {
     /// Returns `true` if `user` has ever been attested for `tier` and that
     /// attestation has not been explicitly revoked — **ignoring expiry**.
     ///
+    /// This is the **non-expiry-aware** check. It is retained only for
+    /// historical/audit purposes and MUST NOT be used to gate fund-moving
+    /// actions; use [`is_valid_and_unexpired`] for that instead.
+    ///
+    /// Public — any caller may invoke this.
+    ///
+    /// # Arguments
+    /// * `user` — Stellar address to check.
+    /// * `tier` — KYC tier to check.
+    pub fn has_ever_attested(env: Env, user: Address, tier: KycTier) -> bool {
+        match env
+            .storage()
+            .persistent()
+            .get::<_, Attestation>(&DataKey::TieredAttestation(user, tier))
+        {
+            Some(record) => record.revoked_at == 0,
+            None => false,
+        }
+    }
+
+    /// Expiry-aware verification check. Kept for backwards compatibility;
+    /// behaves exactly like [`is_valid_and_unexpired`].
+    pub fn is_verified(env: Env, user: Address, tier: KycTier) -> bool {
+        Self::is_valid_and_unexpired(env, user, tier)
+    }
+
+    /// Returns the highest verified tier for `user`, or `None` if no tier is verified.
+    ///
+    /// Uses the expiry-aware [`is_valid_and_unexpired`] check.
+    pub fn get_highest_tier(env: Env, user: Address) -> Option<KycTier> {
+        for tier in [KycTier::Business, KycTier::Enhanced, KycTier::Basic] {
+            if Self::is_valid_and_unexpired(env.clone(), user.clone(), tier) {
+                return Some(tier);
+            }
+        }
+        None
+    }
+
+    /// Revoke attestations for multiple users atomically.
+    ///
     /// Only the admin may call this. Skips users with no active attestation
     /// rather than panicking, to allow partial-valid batches.
     ///
@@ -277,16 +319,113 @@ impl KycAttestationContract {
 
         let now = env.ledger().timestamp();
         for user in users.iter() {
-            for tier in [KycTier::
+            for tier in [KycTier::Basic, KycTier::Enhanced, KycTier::Business] {
+                if Self::revoke_record(&env, &user, tier, now) {
+                    env.events()
+                        .publish((Symbol::new(&env, "KycRevoked"),), (user.clone(), tier));
+                }
+            }
+        }
+    }
 
-/* … truncated 3642 chars — edit only what you need near the top … */
-    /// This is the **non-expiry-aware** check. It is retained only for
-    /// historical/audit purposes and MUST NOT be used to gate fund-moving
-    /// actions; use [`is_valid_and_unexpired`] for that instead.
+    /// Revoke a batch of `(user, tier)` attestations in a single invocation.
     ///
-    /// Public — any caller may invoke this.
+    /// Only the admin may call this. Missing or already-revoked entries are
+    /// skipped silently, while a batch larger than 50 entries panics.
+    pub fn batch_revoke(
+        env: Env,
+        admin: Address,
+        revocations: soroban_sdk::Vec<(Address, KycTier)>,
+    ) {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin);
+
+        if revocations.len() > 50 {
+            panic!("Batch size exceeds maximum of 50");
+        }
+
+        let now = env.ledger().timestamp();
+        let mut revoked_count = 0u32;
+
+        for (user, tier) in revocations.iter() {
+            if !Self::revoke_record(&env, &user, tier, now) {
+                continue;
+            }
+            revoked_count += 1;
+
+            env.events()
+                .publish((Symbol::new(&env, "KycRevoked"),), (user.clone(), tier));
+            env.events().publish(
+                (Symbol::new(&env, "AttestationRevoked"),),
+                AttestationRevoked {
+                    user: user.clone(),
+                    tier,
+                },
+            );
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "BatchRevocationCompleted"),),
+            BatchRevocationCompleted {
+                count: revoked_count,
+                admin: admin.clone(),
+                timestamp: now,
+            },
+        );
+    }
+
+    /// Return the full attestation record for `user` and `tier`, or panic if none exists.
     ///
     /// # Arguments
-    /// * `user` — Ste
+    /// * `user` — Stellar address to look up.
+    /// * `tier` — KYC tier to look up.
+    pub fn get_attestation(env: Env, user: Address, tier: KycTier) -> Attestation {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TieredAttestation(user, tier))
+            .expect("no attestation found for user and tier")
+    }
+
+    // ── Internal helpers ──────────────────────────────────────────────────────
 
 /* … truncated 1568 chars — edit only what you need near the top … */
+
+mod governance;
+pub use governance::{CONTRACT_VERSION, UPGRADE_TIMELOCK_SECS};
+    fn assert_admin(env: &Env, caller: &Address) {
+        let stored: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        if caller != &stored {
+            panic!("unauthorized: caller is not admin");
+        }
+    }
+
+    /// Mark the `(user, tier)` attestation revoked, keeping the revocation
+    /// evidence and legacy mirrors in sync with `revoke`. Returns `false` when
+    /// there is no active attestation to revoke.
+    fn revoke_record(env: &Env, user: &Address, tier: KycTier, now: u64) -> bool {
+        let key = DataKey::TieredAttestation(user.clone(), tier);
+        let mut record: Attestation = match env.storage().persistent().get(&key) {
+            Some(record) => record,
+            None => return false,
+        };
+        if record.revoked_at != 0 {
+            return false;
+        }
+
+        record.revoked_at = now;
+        record.last_revoked_at = now;
+        record.revocation_count = record.revocation_count.saturating_add(1);
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Attestation(user.clone()), &record);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AttestationByTier(user.clone(), tier), &record);
+        true
+    }
+}

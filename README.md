@@ -526,3 +526,6 @@ MIT
 
 <!-- handsoff-issue-1178 -->
 - #1178: [BE-132] `POST /api/auth/2fa/disable` only requires the password — no TOTP confirmation and no notification
+
+<!-- handsoff-issue-1280 -->
+- #1280: [BE-148] `POST /api/auth/refresh` always returns 500 — malformed SELECT list (`u.role` followed by a duplicated column line without a comma)
