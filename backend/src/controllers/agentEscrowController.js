@@ -14,8 +14,11 @@
 const { v4: uuidv4 } = require("uuid");
 const db = require("../db");
 const { createEscrow, confirmPayout, cancelEscrow } = require("../services/agentEscrow");
-const { enqueueEmail } = require("../services/email");
+const { sendAgentEscrowDeliveredEmail } = require("../services/email");
+const { enqueueEmail, sendEscrowCancelledEmail } = require("../services/email");
 const audit = require("../services/audit");
+const feeConfigService = require("../services/feeConfigService");
+const logger = require("../utils/logger");
 
 const DEFAULT_FEE_BPS = parseInt(process.env.ESCROW_FEE_BPS || "250", 10);
 
@@ -51,7 +54,7 @@ function amountToStroops(amount) {
  * returns escrows the caller funded; `role=agent` returns escrows assigned to
  * the caller's agent wallet. Results are paginated.
  */
-async function list(req, res, next) {
+async function listEscrows(req, res, next) {
   try {
     const role = req.query.role === "agent" ? "agent" : "sender";
     const status = req.query.status;
@@ -157,6 +160,9 @@ async function create(req, res, next) {
     }
     const { public_key, encrypted_secret_key } = walletResult.rows[0];
 
+    // The fee is server-authoritative: any client-supplied fee_bps is ignored.
+    const feeConfig = await feeConfigService.getActiveConfig("escrow", "USDC");
+    const feeBps = feeConfig ? Number(feeConfig.fee_bps) : DEFAULT_FEE_BPS;
     // Issue #1156: Apply compliance checks to escrow creation (value-moving endpoint)
     const { ensureKycIfNeeded, amlRescreenForPayment, dailyLimitExceeded, checkFraud, logFraudBlock } = require("./paymentController");
     const { estimateUSDValue } = require("./paymentController");
@@ -184,6 +190,8 @@ async function create(req, res, next) {
       encryptedSecretKey: encrypted_secret_key,
       recipient: recipient_wallet,
       agent: agent_wallet,
+      amount: Math.round(parseFloat(amount) * 1e7), // convert to stroops
+      feeBps,
       amount: amountStroops.toString(), // stroops, converted without float error
       feeBps: DEFAULT_FEE_BPS,
     });
@@ -201,14 +209,14 @@ async function create(req, res, next) {
         agent_wallet,
         amount,
         asset,
-        DEFAULT_FEE_BPS,
+        feeBps,
         txHash,
       ]
     );
 
     res.status(201).json({
       message: "Escrow created",
-      escrow: { id: escrowDbId, contract_escrow_id: escrowId, tx_hash: txHash, status: "pending" },
+      escrow: { id: escrowDbId, contract_escrow_id: escrowId, tx_hash: txHash, fee_bps: feeBps, status: "pending" },
     });
   } catch (err) {
     next(err);
@@ -281,11 +289,7 @@ async function confirm(req, res, next) {
     );
     if (senderResult.rows[0]) {
       const { email, full_name, agent_name } = senderResult.rows[0];
-      enqueueEmail({
-        to: email,
-        subject: "Your AfriPay payment has been delivered",
-        html: `<p>Hi ${full_name},</p><p>Your payment of <strong>${escrow.amount} ${escrow.asset}</strong> has been delivered to ${escrow.recipient_wallet} by agent <strong>${agent_name || escrow.agent_wallet}</strong>.</p>`,
-      }).catch(() => {});
+      sendAgentEscrowDeliveredEmail(email, full_name, escrow.amount, escrow.asset, escrow.recipient_wallet, agent_name || escrow.agent_wallet).catch(() => {});
     }
 
     await audit.log(
@@ -303,8 +307,9 @@ async function confirm(req, res, next) {
 }
 
 /**
- * POST /api/escrow/:id/cancel
- * Sender cancels after the 48-hour window.
+ * POST /api/escrow/:id/cancel  (also served by POST /api/payments/:id/cancel)
+ * Sender cancels after the 48-hour window. DB is updated only after the
+ * on-chain cancel_escrow succeeds.
  */
 async function cancel(req, res, next) {
   try {
@@ -320,28 +325,87 @@ async function cancel(req, res, next) {
     const escrow = escrowResult.rows[0];
 
     if (escrow.status !== "pending") {
-      return res.status(400).json({ error: "Escrow is not pending" });
+      return res.status(400).json({ error: "Only pending escrows can be cancelled" });
     }
-    if (escrow.sender_wallet !== req.user.walletAddress) {
+
+    // The sender wallet may be any of the caller's wallets, not just the default.
+    const walletResult = await db.query(
+      "SELECT encrypted_secret_key FROM wallets WHERE user_id = $1 AND public_key = $2",
+      [req.user.userId, escrow.sender_wallet]
+    );
+    if (!walletResult.rows[0]) {
       return res.status(403).json({ error: "Only the sender can cancel this escrow" });
     }
 
-    const walletResult = await db.query(
-      "SELECT encrypted_secret_key FROM wallets WHERE user_id = $1 ORDER BY is_default DESC, created_at ASC LIMIT 1",
-      [req.user.userId]
-    );
+    const expiresAt = escrow.expires_at
+      ? new Date(escrow.expires_at)
+      : new Date(new Date(escrow.created_at).getTime() + 48 * 60 * 60 * 1000);
+    if (new Date() < expiresAt) {
+      return res.status(403).json({
+        error: "CANCEL_TOO_EARLY",
+        message: "You cannot cancel this payment until 48 hours after creation.",
+        cancel_available_at: expiresAt.toISOString(),
+      });
+    }
 
-    const { txHash } = await cancelEscrow({
-      encryptedSecretKey: walletResult.rows[0].encrypted_secret_key,
-      escrowId: escrow.contract_escrow_id,
-    });
+    let txHash;
+    try {
+      ({ txHash } = await cancelEscrow({
+        encryptedSecretKey: walletResult.rows[0].encrypted_secret_key,
+        escrowId: escrow.contract_escrow_id,
+      }));
+    } catch (stellarErr) {
+      logger.error("On-chain cancel_escrow failed", {
+        escrowId: escrow.contract_escrow_id,
+        error: stellarErr.message,
+      });
+      return res.status(502).json({
+        error: "On-chain cancellation failed. Please try again later.",
+      });
+    }
 
     await db.query(
-      "UPDATE agent_escrows SET status = 'cancelled', confirm_tx_hash = $1 WHERE id = $2",
+      "UPDATE agent_escrows SET status = 'cancelled', cancelled_at = NOW(), confirm_tx_hash = $1 WHERE id = $2",
       [txHash, id]
     );
 
-    res.json({ message: "Escrow cancelled, funds refunded", tx_hash: txHash });
+    db.query(
+      "SELECT u.email, u.full_name FROM users u JOIN wallets w ON w.user_id = u.id WHERE w.public_key = $1 LIMIT 1",
+      [escrow.sender_wallet]
+    )
+      .then(({ rows }) => {
+        if (!rows[0]) return;
+        return sendEscrowCancelledEmail(rows[0].email, rows[0].full_name, escrow.amount, escrow.asset, txHash);
+      })
+      .catch(() => {});
+
+    await audit.auditLog(req, "escrow_cancelled", {
+      type: "agent_escrow",
+      id,
+      newValue: {
+        escrow_id: id,
+        contract_escrow_id: escrow.contract_escrow_id,
+        stellar_tx_hash: txHash,
+        cancelled_at: new Date().toISOString(),
+      },
+    });
+
+    webhook.deliver("escrow.cancelled", req.user.userId, {
+      escrow_id: id,
+      contract_escrow_id: escrow.contract_escrow_id,
+      tx_hash: txHash,
+      amount: escrow.amount,
+      asset: escrow.asset,
+      sender: escrow.sender_wallet,
+    }).catch(() => {});
+
+    res.json({
+      message: "Escrow cancelled and funds refunded to your wallet",
+      escrow_id: id,
+      contract_escrow_id: escrow.contract_escrow_id,
+      tx_hash: txHash,
+      status: "cancelled",
+    });
   } catch (err) {
     next(err);
   }
@@ -425,4 +489,46 @@ async function partialRelease(req, res, next) {
   }
 }
 
-/* … truncated 4758 chars — edit only what you need near the top … */
+/**
+ * GET /api/escrow/:id
+ *
+ * Fetches a single escrow by DB id. The caller must be a party to the
+ * escrow (sender, recipient, or assigned agent); otherwise 404 is returned
+ * to avoid leaking other users' escrow details (IDOR protection).
+ */
+async function getEscrow(req, res, next) {
+  try {
+    const { id } = req.params;
+
+    const escrowResult = await db.query(
+      "SELECT * FROM agent_escrows WHERE id = $1",
+      [id]
+    );
+    if (!escrowResult.rows[0]) {
+      return res.status(404).json({ error: "Escrow not found" });
+    }
+    const escrow = escrowResult.rows[0];
+
+    // Resolve the caller's wallets to verify ownership.
+    const walletResult = await db.query(
+      "SELECT public_key FROM wallets WHERE user_id = $1",
+      [req.user.userId]
+    );
+    const callerWallets = walletResult.rows.map((row) => row.public_key);
+
+    const isParty =
+      callerWallets.includes(escrow.sender_wallet) ||
+      callerWallets.includes(escrow.agent_wallet) ||
+      callerWallets.includes(escrow.recipient_wallet);
+
+    if (!isParty) {
+      return res.status(404).json({ error: "Escrow not found" });
+    }
+
+    res.json({ escrow });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, confirm, cancel, partialRelease, getEscrow, listEscrows };

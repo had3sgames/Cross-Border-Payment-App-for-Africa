@@ -111,16 +111,49 @@ const accountRefs = new Map();
 const pushTargets = new Map();
 
 let globalPaymentsClose = null;
+let globalEffectsClose = null;
 let globalLastEventAt = 0;
 let globalLivenessTimer = null;
 let stopped = false;
 
 function updateStreamMetric() {
-  wsConnections.set(activeStreams.size + (globalPaymentsClose ? 1 : 0));
+  wsConnections.set(activeStreams.size + (globalPaymentsClose ? 1 : 0) + (globalEffectsClose ? 1 : 0));
 }
 
 function getStreamCount() {
-  return activeStreams.size + (globalPaymentsClose ? 1 : 0);
+  return activeStreams.size + (globalPaymentsClose ? 1 : 0) + (globalEffectsClose ? 1 : 0);
+}
+
+async function reconcileClaimableBalanceEffect(effect) {
+  if (!['claimable_balance_claimed', 'claimable_balance_clawed_back'].includes(effect.type) || !effect.balance_id) return;
+
+  const claimant = typeof effect.claimant === 'string' ? effect.claimant : effect.claimant?.destination || null;
+  const isClawedBack = effect.type === 'claimable_balance_clawed_back';
+
+  await db.query(
+    `WITH updated_balance AS (
+       UPDATE claimable_balances
+       SET status = CASE
+         WHEN $1::boolean THEN 'reclaimed'
+         WHEN status = 'expired' AND EXISTS (
+           SELECT 1 FROM transactions AS tx
+           WHERE tx.claimable_balance_id = claimable_balances.balance_id
+             AND tx.sender_wallet = $3
+         ) THEN 'reclaimed'
+         ELSE 'claimed'
+       END,
+       updated_at = NOW()
+       WHERE balance_id = $2 AND status IN ('active', 'expired')
+       RETURNING balance_id, status
+     )
+     UPDATE transactions AS tx
+     SET status = CASE WHEN updated_balance.status = 'reclaimed' THEN 'reclaimed' ELSE 'completed' END,
+         confirmed_at = NOW()
+     FROM updated_balance
+     WHERE tx.claimable_balance_id = updated_balance.balance_id
+       AND tx.status IN ('pending_claim', 'expired')`,
+    [isClawedBack, effect.balance_id, claimant],
+  );
 }
 
 function isWanted(publicKey) {
@@ -292,6 +325,50 @@ async function startGlobalPaymentStream(attempt = 0) {
   }
 }
 
+async function startGlobalEffectsStream(attempt = 0) {
+  if (globalEffectsClose || stopped) return;
+  if (attempt > 0) {
+    const delay = backoffMs(attempt - 1);
+    logger.info('Reconnecting ledger effects stream', { attempt, delayMs: delay });
+    await new Promise((resolve) => setTimeout(resolve, delay).unref());
+    if (globalEffectsClose || stopped) return;
+  }
+
+  let pagingToken = 'now';
+  try {
+    const cached = await cache.get('ledger:cursor:effects:global');
+    if (cached) pagingToken = cached;
+  } catch {}
+  if (globalEffectsClose || stopped) return;
+
+  const close = server.effects().cursor(pagingToken).stream({
+    onmessage: async (effect) => {
+      try {
+        if (['claimable_balance_claimed', 'claimable_balance_clawed_back'].includes(effect.type)) {
+          await reconcileClaimableBalanceEffect(effect);
+          healthState.last_event_at = new Date().toISOString();
+        }
+        cache.set('ledger:cursor:effects:global', effect.paging_token, 3600).catch(() => {});
+      } catch (err) {
+        logger.warn('Failed to reconcile claimable balance effect', {
+          balanceId: effect.balance_id,
+          error: err.message,
+        });
+      }
+    },
+    onerror: (err) => {
+      logger.warn('Ledger effects stream error', { attempt, error: err?.message });
+      if (globalEffectsClose !== close) return;
+      try { close(); } catch {}
+      globalEffectsClose = null;
+      updateStreamMetric();
+      startGlobalEffectsStream(attempt + 1);
+    },
+  });
+  globalEffectsClose = close;
+  updateStreamMetric();
+}
+
 function restartGlobalPaymentStream(attempt) {
   if (globalPaymentsClose) {
     try { globalPaymentsClose(); } catch {}
@@ -340,10 +417,10 @@ async function initStreams() {
   stopped = false;
   try {
     const { rows } = await db.query(
-      `SELECT u.id, w.public_key
+      `SELECT DISTINCT u.id, w.public_key
        FROM users u
        JOIN wallets w ON w.user_id = u.id
-       WHERE u.push_subscription IS NOT NULL`
+       JOIN push_subscriptions ps ON ps.user_id = u.id AND ps.active = true`
     );
     for (const row of rows) pushTargets.set(row.public_key, row.id);
     logger.info('Ledger listener initialized', { pushTargets: rows.length });
@@ -351,6 +428,7 @@ async function initStreams() {
     logger.error('Failed to load push targets', { error: err.message });
   }
   startGlobalPaymentStream();
+  startGlobalEffectsStream();
 }
 
 /** Close every Horizon stream (used on shutdown). */
@@ -363,6 +441,10 @@ function stopAll() {
   if (globalPaymentsClose) {
     try { globalPaymentsClose(); } catch {}
     globalPaymentsClose = null;
+  }
+  if (globalEffectsClose) {
+    try { globalEffectsClose(); } catch {}
+    globalEffectsClose = null;
   }
   for (const key of [...activeStreams.keys()]) stopStream(key);
   accountRefs.clear();
@@ -381,4 +463,5 @@ module.exports = {
   initStreams,
   getHealth,
   getStreamCount,
+  reconcileClaimableBalanceEffect,
 };

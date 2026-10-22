@@ -3,6 +3,7 @@ const { body, query, validationResult } = require("express-validator");
 const rateLimit = require("express-rate-limit");
 const StellarSdk = require("@stellar/stellar-sdk");
 const authMiddleware = require("../middleware/auth");
+const { requireStepUp } = require("../middleware/requireStepUp");
 const { readLimiter, paymentLimiter } = require("../middleware/rateLimiter");
 const idempotency = require("../middleware/idempotency");
 const paymentSendValidators = require("../validators/paymentSendValidators");
@@ -104,13 +105,13 @@ router.get("/fee-rate", getFeeRate);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post("/send", paymentLimiter, paymentSendValidators, validate, idempotency, send);
+router.post("/send", paymentLimiter, paymentSendValidators, validate, idempotency, requireStepUp, send);
 
 /**
  * POST /api/payments/batch
  * @protected @idempotent
  */
-router.post("/batch", paymentBatchValidators, validate, idempotency, sendBatch);
+router.post("/batch", paymentBatchValidators, validate, idempotency, requireStepUp, sendBatch);
 
 // Federation address resolution
 router.get(
@@ -176,6 +177,11 @@ router.get(
  *           type: string
  *           enum: [XLM, USDC, NGN, GHS, KES]
  *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Comma-separated status filter (pending, confirming, completed, failed, pending_claim, cancelled). Unknown values return 400.
+ *       - in: query
  *         name: limit
  *         schema:
  *           type: integer
@@ -185,8 +191,14 @@ router.get(
  *       - in: query
  *         name: cursor
  *         schema:
- *           type: integer
- *         description: Pagination cursor (last transaction id)
+ *           type: string
+ *         description: Opaque cursor returned by the previous page
+ *       - in: query
+ *         name: wallet_id
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Wallet to query; must belong to the authenticated user
  *     responses:
  *       200:
  *         description: List of transactions
@@ -205,6 +217,7 @@ router.get(
       .trim()
       .isIn(ALLOWED_HISTORY_ASSETS)
       .withMessage(`asset must be one of: ${ALLOWED_HISTORY_ASSETS.join(", ")}`),
+    query("wallet_id").optional().isUUID().withMessage("wallet_id must be a valid UUID"),
     query("direction")
       .optional({ values: "falsy" })
       .isIn(["sent", "received", "all"])
@@ -257,6 +270,7 @@ router.post(
   ],
   validate,
   idempotency,
+  requireStepUp,
   sendPath,
 );
 
@@ -298,6 +312,7 @@ router.post(
   ],
   validate,
   idempotency,
+  requireStepUp,
   sendStrictReceivePath,
 );
 
@@ -322,6 +337,7 @@ router.post(
   [body("xdr").notEmpty().withMessage("Signed XDR is required")],
   validate,
   idempotency,
+  requireStepUp,
   submitSigned,
 );
 
@@ -339,6 +355,7 @@ router.post(
   [
     require("express-validator").param("id").isUUID().withMessage("id must be a valid UUID"),
     validate,
+    requireStepUp,
   ],
   cancelPendingEscrow,
 );

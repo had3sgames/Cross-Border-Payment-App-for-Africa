@@ -13,7 +13,8 @@
     "sign_out": "Jáde",
     "no_transactions": "Àwọn owó olókùlùkù kò rí",
     "see_all": "Wo gbogbo",
-    "rates_disclaimer": "Àwọn iye àgbèṛò jẹ́ àmọ̀ àti o le agbasilẹ. Awọn idiyele ti o jẹ olulopin tun gbega ni ẹgbẹrun ẹ."
+    "rates_disclaimer": "Àwọn iye àgbèṛò jẹ́ àmọ̀ àti o le agbasilẹ. Awọn idiyele ti o jẹ olulopin tun gbega ni ẹgbẹrun ẹ.",
+    "close": "Pa dé"
   },
   "welcome": {
     "tagline": "Àwọn owó káàlọ iyaleta ti o yara ati aabo ti a rọ́ nipasẹ Stellar blockchain",
@@ -140,7 +141,9 @@
     "review": "Wo Owó",
     "confirm_send": "Ìdúkòṛò & Ránṣẹ́",
     "success": "Owó ti ránṣẹ́ nítòótọ!",
-    "error": "Owó kò ṣẹ"
+    "error": "Owó kò ṣẹ",
+    "qr_unsupported_uri": "Koodu QR yìí jẹ́ ìbéèrè ìdúnàádúrà, kì í ṣe ìbéèrè ìsanwó. Koodu QR ìsanwó nìkan ni a ṣe àtìlẹ́yìn fún.",
+    "qr_prefilled": "A ti kún àwọn àlàyé ìsanwó láti inú koodu QR — jọ̀wọ́ ṣàyẹ̀wò kí o tó fi ránṣẹ́."
   },
   "auth": {
     "setup_pin_title": "Ṣetán PIN Ẹ̀rọ",
@@ -199,5 +202,22 @@
     "contact_error": "Kò ṣẹ láti tún àpejọ ọ̀",
     "address_copied": "Ìpilẹ̀ ti pada!",
     "language": "Èdè"
+  },
+  "contacts_import": {
+    "open": "Kó CSV wọlé",
+    "title": "Kó àwọn olùbásọ̀rọ̀ wọlé nípasẹ̀ CSV",
+    "description": "Gbé fáìlì CSV sókè láti fi ọ̀pọ̀ olùgbà kún ní ẹ̀ẹ̀kan. Kọ́kọ́ ṣe ìgbàsílẹ̀ àpẹẹrẹ láti rí àwọn àkọlé ọwọ̀n tó tọ́.",
+    "download_template": "↓ Ṣe ìgbàsílẹ̀ àpẹẹrẹ CSV",
+    "select_file": "Yan fáìlì CSV (tó pọ̀jù 5 MB)",
+    "file_too_large": "Fáìlì náà tóbi jù. Ìwọ̀n tó pọ̀jù ni 5 MB.",
+    "template_failed": "Kò ṣeé ṣe láti ṣe ìgbàsílẹ̀ àpẹẹrẹ. Jọ̀wọ́ gbìyànjú lẹ́ẹ̀kansi.",
+    "no_file": "Jọ̀wọ́ yan fáìlì CSV láti kó wọlé.",
+    "upload_failed": "Kò ṣeé ṣe láti kó àwọn olùbásọ̀rọ̀ wọlé. Ṣàyẹ̀wò ìlànà fáìlì náà.",
+    "upload": "Gbé sókè kí o sì kó wọlé",
+    "uploading": "Ó ń gbé sókè…",
+    "imported": "Tí a kó wọlé: {{count}}",
+    "skipped": "Àwọn ẹ̀dà tí a fò: {{count}}",
+    "failed": "Tí ó kùnà: {{count}}",
+    "row_error": "Ìlà {{row}}: {{error}}"
   }
 }

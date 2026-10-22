@@ -3,6 +3,7 @@ const db = require('../db');
 const { getStellarStats } = require('../services/stellar');
 const { attestKyc, revokeKyc } = require('../services/kycAttestation');
 const audit = require('../services/audit');
+const { disconnectUser } = require('../services/socketRegistry');
 
 // Cache for Stellar stats (10 seconds)
 let stellarStatsCache = null;
@@ -814,6 +815,8 @@ async function bulkSuspend(req, res, next) {
       [reason || null, userIds]
     );
     await client.query('COMMIT');
+
+    disconnectUser(affectedUsers.map((u) => u.id));
 
     await audit.auditLog(req, 'user_suspension', {
       type: 'bulk_user',

@@ -1,6 +1,11 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, crypto::Hash, Address, Bytes, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, crypto::Hash, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol,
+    Vec,
+};
 
+#[cfg(test)]
 mod test;
 
 const DEFAULT_PROPOSAL_TTL_SECS: u64 = 604_800; // 7 days
@@ -13,8 +18,13 @@ const DEFAULT_SIGNER_WEIGHT: u32 = 1;
 /// can hold so a single signer cannot unilaterally satisfy quorum.
 const MAX_SIGNER_WEIGHT: u32 = 100;
 
+/// Domain-separation tag prefixed to every `proposal_hash` preimage.
+const PROPOSAL_HASH_TAG: &[u8] = b"AFRIPAY_MULTISIG_PROPOSAL";
+/// Version byte of the `proposal_hash` preimage format.
+const PROPOSAL_HASH_VERSION: u8 = 1;
+
 #[contracttype]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxStatus {
     Pending,
     Executed,
@@ -24,7 +34,7 @@ pub enum TxStatus {
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Proposal {
     pub proposer: Address,
     pub description: String,
@@ -37,7 +47,7 @@ pub struct Proposal {
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct QuorumChangeProposal {
     pub proposer: Address,
     pub new_quorum: u32,
@@ -49,7 +59,7 @@ pub struct QuorumChangeProposal {
 
 /// Whether a pending rotation adds or removes a signer.
 #[contracttype]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RotationAction {
     Add,
     Remove,
@@ -57,7 +67,7 @@ pub enum RotationAction {
 
 /// A time-locked signer-rotation request waiting to become effective.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PendingRotation {
     pub action: RotationAction,
     pub signer: Address,
@@ -65,6 +75,7 @@ pub struct PendingRotation {
     pub effective_at: u64,
 }
 
+#[derive(Debug)]
 #[contracttype]
 pub enum DataKey {
     Admin,
@@ -85,7 +96,7 @@ pub enum DataKey {
 // ── Signer-rotation event payloads ────────────────────────────────────────────
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EvtSignerChangeProposed {
     pub action: RotationAction,
     pub signer: Address,
@@ -93,7 +104,7 @@ pub struct EvtSignerChangeProposed {
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EvtSignerChanged {
     pub action: RotationAction,
     pub signer: Address,
@@ -101,7 +112,7 @@ pub struct EvtSignerChanged {
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EvtSignerChangeCancelled {
     pub action: RotationAction,
     pub signer: Address,
@@ -120,7 +131,7 @@ impl MultisigContract {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
-        assert!(quorum > 0 && quorum as usize <= approvers.len(), "invalid quorum");
+        assert!(quorum > 0 && quorum <= approvers.len(), "invalid quorum");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Approvers, &approvers);
@@ -255,7 +266,7 @@ impl MultisigContract {
         proposer.require_auth();
         Self::assert_is_approver(&env, &proposer);
         let approvers: Vec<Address> = env.storage().instance().get(&DataKey::Approvers).unwrap();
-        assert!(new_quorum > 0 && new_quorum as usize <= approvers.len(), "invalid quorum");
+        assert!(new_quorum > 0 && new_quorum <= approvers.len(), "invalid quorum");
 
         let id: u64 = env.storage().instance().get(&DataKey::QuorumCounter).unwrap();
         let proposal_ttl: u64 = env.storage().instance().get(&DataKey::ProposalTtl).unwrap_or(DEFAULT_PROPOSAL_TTL_SECS);
@@ -565,24 +576,63 @@ impl MultisigContract {
     ///   a testnet signature on mainnet or across any two networks.
     /// * **proposal id** — a signature over `proposal_hash(a)` can never satisfy
     ///   `proposal_hash(b)`, even if every other field matches.
-    /// * **payload + nonce** — the transfer amount and the per-proposal unique
-    ///   `expires_at` value.
+    /// * **payload** — every immutable proposal field (proposer, recipient,
+    ///   amount, expiry, description), so a signature commits to the full message.
+    ///
+    /// # Preimage format (version 1)
+    ///
+    /// `sha256` over the concatenation of:
+    ///
+    /// | Field          | Encoding                                     |
+    /// |----------------|----------------------------------------------|
+    /// | tag            | ASCII `AFRIPAY_MULTISIG_PROPOSAL` (25 bytes) |
+    /// | version        | `0x01` (1 byte)                              |
+    /// | contract       | `ScVal::Address` XDR                         |
+    /// | network id     | 32 bytes                                     |
+    /// | proposal_id    | u64 big-endian (8 bytes)                     |
+    /// | proposer       | `ScVal::Address` XDR                         |
+    /// | recipient      | `ScVal::Address` XDR                         |
+    /// | amount         | i128 big-endian (16 bytes)                   |
+    /// | expires_at     | u64 big-endian (8 bytes)                     |
+    /// | description    | `ScVal::String` XDR (length-prefixed)        |
+    ///
+    /// XDR values are self-delimiting, so the encoding is unambiguous. Client
+    /// tooling can rebuild the preimage with `stellar-xdr` and must match this
+    /// function's output.
     pub fn proposal_hash(env: Env, proposal_id: u64) -> BytesN<32> {
         let proposal: Proposal = env.storage().persistent().get(&DataKey::Proposal(proposal_id))
             .expect("proposal not found");
         let contract_addr = env.current_contract_address();
-        let mut preimage = Bytes::new(&env);
+        let mut preimage = Bytes::from_slice(&env, PROPOSAL_HASH_TAG);
+        preimage.push_back(PROPOSAL_HASH_VERSION);
         // Domain separator: this contract instance.
         preimage.append(&contract_addr.to_xdr(&env));
         // Domain separator: the network / chain id.
         preimage.append(&Bytes::from(env.ledger().network_id()));
-        // proposal_id as 8 big-endian bytes — binds the signature to one proposal.
+        // proposal_id — binds the signature to one proposal.
         preimage.append(&Bytes::from_array(&env, &proposal_id.to_be_bytes()));
-        // amount as 16 big-endian bytes
+        preimage.append(&proposal.proposer.to_xdr(&env));
+        preimage.append(&proposal.recipient.to_xdr(&env));
         preimage.append(&Bytes::from_array(&env, &proposal.amount.to_be_bytes()));
-        // nonce: use expires_at as unique per-proposal value
         preimage.append(&Bytes::from_array(&env, &proposal.expires_at.to_be_bytes()));
+        preimage.append(&proposal.description.to_xdr(&env));
         env.crypto().sha256(&preimage)
+        env.crypto().sha256(&preimage).into()
+    }
+
+    /// Extract the raw ed25519 public key of a `G…` account address.
+    ///
+    /// `ScVal::Address(ScAddress::Account(PublicKey::Ed25519(key)))` encodes as
+    /// `[ScVal tag u32][ScAddress tag u32 = 0][PublicKey tag u32 = 0][key 32B]`.
+    /// Contract (`C…`) addresses have no ed25519 key and are rejected; they must
+    /// approve through the Soroban-auth `approve` path instead.
+    fn account_ed25519_key(env: &Env, addr: &Address) -> BytesN<32> {
+        let xdr = addr.to_xdr(env);
+        let account_tag = Bytes::from_array(env, &[0u8; 4]);
+        if xdr.len() != 44 || xdr.slice(4..8) != account_tag || xdr.slice(8..12) != account_tag {
+            panic!("Signer must be an ed25519 account address");
+        }
+        xdr.slice(12..44).try_into().unwrap()
     }
 
     /// Execute a proposal using pre-collected off-chain ed25519 signatures.
@@ -623,9 +673,13 @@ impl MultisigContract {
             // Signer must be a registered approver
             Self::assert_is_approver(&env, &signer);
 
+            // Verify ed25519 signature over the proposal hash. Only `G…` account
+            // signers can sign off-chain; contract signers use `approve`.
+            let pub_key = Self::account_ed25519_key(&env, &signer);
             // Verify ed25519 signature over the proposal hash
-            let pub_key: BytesN<32> = signer.to_xdr(&env)
-                .slice(signer.to_xdr(&env).len() - 32..)
+            let signer_xdr = signer.clone().to_xdr(&env);
+            let pub_key: BytesN<32> = signer_xdr
+                .slice(signer_xdr.len() - 32..)
                 .try_into()
                 .expect("Invalid signer public key");
             env.crypto().ed25519_verify(&pub_key, &Bytes::from(hash.clone()), &sig);
@@ -641,3 +695,6 @@ impl MultisigContract {
         env.storage().persistent().set(&DataKey::Proposal(proposal_id), &proposal);
     }
 }
+
+mod governance;
+pub use governance::{CONTRACT_VERSION, UPGRADE_TIMELOCK_SECS};

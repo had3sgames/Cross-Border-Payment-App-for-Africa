@@ -152,7 +152,9 @@
     "review": "Vérifier le paiement",
     "confirm_send": "Confirmer et envoyer",
     "success": "Paiement envoyé avec succès !",
-    "error": "Échec de la transaction"
+    "error": "Échec de la transaction",
+    "qr_unsupported_uri": "Ce code QR est une demande de transaction, pas une demande de paiement. Seuls les codes QR de paiement sont pris en charge.",
+    "qr_prefilled": "Détails du paiement remplis depuis le code QR — vérifiez-les avant l'envoi."
   },
   "receive": {
     "federation_label": "Adresse fédérée"
@@ -191,5 +193,22 @@
     "verify_pin_title": "Vérifier la transaction",
     "confirming_transaction": "Confirmez cette transaction :",
     "pin_verified": "Code PIN vérifié ! Envoi du paiement..."
+  },
+  "contacts_import": {
+    "open": "Importer CSV",
+    "title": "Importer des contacts via CSV",
+    "description": "Téléversez un fichier CSV pour ajouter des destinataires en masse. Téléchargez d'abord le modèle pour obtenir les bons en-têtes de colonnes.",
+    "download_template": "↓ Télécharger le modèle CSV",
+    "select_file": "Choisir un fichier CSV (5 Mo max)",
+    "file_too_large": "Fichier trop volumineux. La taille maximale est de 5 Mo.",
+    "template_failed": "Échec du téléchargement du modèle. Veuillez réessayer.",
+    "no_file": "Veuillez sélectionner un fichier CSV à importer.",
+    "upload_failed": "Échec de l'importation des contacts. Vérifiez le format du fichier.",
+    "upload": "Téléverser et importer",
+    "uploading": "Téléversement…",
+    "imported": "Importés : {{count}}",
+    "skipped": "Doublons ignorés : {{count}}",
+    "failed": "Échecs : {{count}}",
+    "row_error": "Ligne {{row}} : {{error}}"
   }
 }

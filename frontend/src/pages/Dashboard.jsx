@@ -59,6 +59,23 @@ function normalizeWalletsResponse(data) {
   return [];
 }
 
+const ANCHOR_DOMAINS = (process.env.REACT_APP_ANCHOR_DOMAINS || 'testanchor.stellar.org')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
+
+/** Returns the URL if it is HTTPS and on an allow-listed anchor domain, else null. */
+export function safeAnchorUrl(raw) {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    if (u.protocol !== 'https:') return null;
+    return ANCHOR_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`)) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Dashboard() {
   const { user, updateUser } = useAuth();
   const navigate = useNavigate();
@@ -317,14 +334,29 @@ export default function Dashboard() {
     setAnchorLoading(true);
     setAnchorAction(action);
     const win = window.open('', 'anchor', 'width=500,height=600');
+    // Prevent reverse tabnabbing: the third-party anchor must not get a handle to this tab.
+    if (win) win.opener = null;
     try {
       const asset = 'USDC';
       const endpoint = action === 'deposit' ? '/anchor/deposit' : '/anchor/withdraw';
       const res = await api.post(endpoint, { asset });
-      win.location.href = res.data.url;
+      const url = safeAnchorUrl(res.data?.url);
+      if (!url) throw new Error('Refusing to open an untrusted anchor URL');
+      if (win) {
+        win.location.href = url;
+      } else {
+        toast(
+          (tst) => (
+            <a href={url} target="_blank" rel="noopener noreferrer" onClick={() => toast.dismiss(tst.id)}>
+              Continue to anchor
+            </a>
+          ),
+          { duration: 15000 }
+        );
+      }
     } catch (err) {
-      win.close();
-      toast.error(err.response?.data?.error || `Failed to ${action}`);
+      if (win) win.close();
+      toast.error(err.response?.data?.error || err.message || `Failed to ${action}`);
     } finally {
       setAnchorLoading(false);
       setAnchorAction(null);

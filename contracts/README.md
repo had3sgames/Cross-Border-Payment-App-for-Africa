@@ -30,9 +30,41 @@ cargo test
 
 ## Deployment
 
+The deploy script never passes a secret key on the command line. It signs with a
+named Stellar CLI identity (`--source <identity>`).
+
+### Deployer identity setup
+
+**Testnet** — create or import an identity once (the key is read from a prompt/stdin, not argv):
+
 ```bash
-export SOROBAN_SECRET_KEY='your-secret-key'
-bash deploy.sh
+stellar keys generate afripay-testnet-deployer --network testnet --fund
+# or: stellar keys add afripay-testnet-deployer --secret-key   (paste key at the prompt)
+SOROBAN_IDENTITY=afripay-testnet-deployer bash deploy.sh
+```
+
+As a testnet-only convenience, `SOROBAN_SECRET_KEY` is still accepted: the script imports it
+into an identity via stdin and unsets the variable before any deploy call.
+
+**Mainnet** — an explicit identity is required (no env-secret fallback); a Ledger is recommended:
+
+```bash
+stellar keys add afripay-mainnet --ledger      # or another hardware-backed identity
+EXPECTED_WASM_HASH=<sha256 of audited wasm> SOROBAN_IDENTITY=afripay-mainnet \
+  bash deploy.sh --network mainnet --confirm-mainnet
+```
+
+The script exits non-zero (without writing `.deployed_ids.env`) if the deploy fails, the
+returned contract ID is not a valid `C…` address, or the WASM hash does not match
+`EXPECTED_WASM_HASH` (mandatory on mainnet).
+
+### Integration tests
+
+`integration-tests/` registers all contracts in a single test `Env` and exercises KYC → escrow →
+release → fee distributor → dispute, recurring payments with a fee, and savings deposit/withdraw:
+
+```bash
+cd integration-tests && cargo test
 ```
 
 See [deploy.sh](./deploy.sh) for detailed deployment instructions and network configuration.

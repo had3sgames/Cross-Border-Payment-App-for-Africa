@@ -171,10 +171,11 @@ const sep31CallbackSkippedTotal = new client.Counter({
   registers: [registry],
 });
 
-// BE-172: 1 when the shared Redis client is connected, 0 otherwise.
-const redisUp = new client.Gauge({
-  name: 'redis_up',
-  help: 'Whether the shared Redis connection is ready (1) or unavailable (0)',
+// BE-178: fraud rule load/evaluation failures
+const fraudRuleErrorsTotal = new client.Counter({
+  name: 'fraud_rule_errors_total',
+  help: 'Total fraud rule load or evaluation errors, labelled by stage (load, evaluate) and rule',
+  labelNames: ['stage', 'rule'],
   registers: [registry],
 });
 
@@ -205,4 +206,5 @@ module.exports = {
   txQueueBackpressure,
   txQueuePendingTasksTotal,
   sep31CallbackSkippedTotal,
+  fraudRuleErrorsTotal,
 };
