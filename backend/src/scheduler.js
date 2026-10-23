@@ -25,6 +25,7 @@ const ANALYTICS_REFRESH_CRON = process.env.CRON_ANALYTICS_REFRESH   || '0 * * * 
 const LOYALTY_MINT_CRON    = process.env.CRON_LOYALTY_MINT          || '* * * * *';   // every minute
 const FEE_CONFIG_ACTIVATE_CRON = process.env.CRON_FEE_CONFIG_ACTIVATE || '* * * * *'; // every minute
 const NOTIFICATION_CLEANUP_CRON = process.env.CRON_NOTIFICATION_CLEANUP || '0 2 * * *'; // daily at 2 AM
+const PAYMENT_REQUEST_CLEANUP_CRON = process.env.PAYMENT_REQUEST_CLEANUP_CRON || '0 * * * *'; // hourly
 const FEE_CONFIG_REMINDER_CRON = process.env.CRON_FEE_CONFIG_REMINDER || '0 * * * *'; // hourly
 const TX_CONFIRMATION_CRON = process.env.CRON_TX_CONFIRMATION_RECONCILIATION || '* * * * *'; // every minute
 

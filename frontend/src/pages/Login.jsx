@@ -223,36 +223,12 @@ export default function Login() {
                 : t('login.totp_subtitle', 'Enter the 6-digit code from your authenticator app.')}
             </p>
 
-            <div>
-              <label className="text-sm text-gray-600 dark:text-gray-400 mb-1 block">
-                {t('login.totp_label', 'Authentication code')}
-              </label>
-              <input
-                ref={totpInputRef}
-                type="text"
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
-                placeholder="000000"
-                value={totp}
-                onChange={(e) => handleTotpChange(e.target.value)}
-                disabled={loading}
-                aria-label={t('login.totp_aria', '6-digit TOTP authentication code')}
-                aria-invalid={!!totpError}
-                aria-describedby={totpError ? 'totp-error' : undefined}
-                className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-4 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary-500 transition-colors shadow-sm text-center text-3xl tracking-[0.5em] font-mono"
-              />
-              {totpError && (
-                <p id="totp-error" role="alert" className="text-sm text-red-500 mt-2 text-center">{totpError}</p>
-              )}
-              <p className="text-xs text-gray-500 mt-2 text-center">
-                {t('login.totp_hint', 'The code submits automatically when all 6 digits are entered.')}
-              </p>
-            </div>
-
             {loading && (
               <div className="flex justify-center mt-6">
                 <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" role="status" aria-label="Verifying" />
+              </div>
+            )}
+
             {useBackupCode ? (
               <form onSubmit={handleBackupCodeSubmit}>
                 <label
@@ -306,8 +282,13 @@ export default function Login() {
                   onChange={(e) => handleTotpChange(e.target.value)}
                   disabled={loading}
                   aria-label={t('login.totp_aria', '6-digit TOTP authentication code')}
+                  aria-invalid={!!totpError}
+                  aria-describedby={totpError ? 'totp-error' : undefined}
                   className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-4 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:border-primary-500 transition-colors shadow-sm text-center text-3xl tracking-[0.5em] font-mono"
                 />
+                {totpError && (
+                  <p id="totp-error" role="alert" className="text-sm text-red-500 mt-2 text-center">{totpError}</p>
+                )}
                 <p className="text-xs text-gray-500 mt-2 text-center">
                   {t('login.totp_hint', 'The code submits automatically when all 6 digits are entered.')}
                 </p>

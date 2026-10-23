@@ -113,7 +113,7 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(data.title || 'AfriPay', {
       body: data.body || 'You have a new notification',
       icon: '/logo192.png',
-      badge: '/logo192.png',
+      badge: '/badge.png',
       data: data.data || {},
     })
   );

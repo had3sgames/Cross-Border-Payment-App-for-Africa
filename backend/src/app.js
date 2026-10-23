@@ -7,6 +7,7 @@ const Sentry = require('@sentry/node');
 
 const requestId = require('./middleware/requestId');
 const metricsMiddleware = require('./middleware/metricsMiddleware');
+const errorHandler = require('./middleware/errorHandler');
 const { registry } = require('./utils/metrics');
 const rateLimit = require('express-rate-limit');
 const rateLimiters = require('./middleware/rateLimiter');
@@ -50,18 +51,13 @@ const swaggerUi = require('swagger-ui-express');
 const paymentSendValidators = require('./validators/paymentSendValidators');
 
 const logger = require('./utils/logger');
+const { resolveTrustProxy } = require('./utils/trustProxy');
 const { runHealthChecks, runDeepHealthChecks } = require('./services/health');
 
 const app = express();
-const trustedProxies = (process.env.TRUSTED_PROXIES || '').split(',').map((value) => value.trim()).filter(Boolean);
-app.set('trust proxy', trustedProxies.length ? trustedProxies : false);
-
-// Trust the configured number of proxy hops (e.g. TRUST_PROXY=1 behind a single load balancer)
-// so req.ip reflects the real client address for the admin IP allow-list and rate limiting.
-if (process.env.TRUST_PROXY) {
-  const tp = process.env.TRUST_PROXY;
-  app.set('trust proxy', /^\d+$/.test(tp) ? parseInt(tp, 10) : tp === 'true' ? true : tp);
-}
+// req.ip drives rate limiting, the admin IP allow-list and geo-restriction,
+// so only TRUSTED_PROXIES controls which hops may set X-Forwarded-For.
+app.set('trust proxy', resolveTrustProxy(process.env, logger));
 
 // Sentry v8 removed the v7 `Sentry.Handlers` namespace. Request isolation is
 // handled by `Sentry.init()` and errors are captured via
