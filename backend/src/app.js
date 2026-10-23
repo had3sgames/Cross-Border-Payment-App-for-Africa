@@ -7,6 +7,7 @@ const Sentry = require('@sentry/node');
 
 const requestId = require('./middleware/requestId');
 const metricsMiddleware = require('./middleware/metricsMiddleware');
+const errorHandler = require('./middleware/errorHandler');
 const { registry } = require('./utils/metrics');
 const rateLimit = require('express-rate-limit');
 const rateLimiters = require('./middleware/rateLimiter');

@@ -63,18 +63,17 @@ router.get('/qr', getQRCode);
  * @swagger
  * /api/wallet/transactions:
  *   get:
- *     summary: "[DEPRECATED] Get wallet transactions"
+ *     summary: "[REMOVED] Get wallet transactions"
  *     description: >
- *       **Deprecated.** Use `GET /api/payments/history` instead, which
- *       supports pagination, filtering, and a consistent response shape.
- *       This endpoint will be removed in a future release.
+ *       **Removed** (sunset 2026-01-01). Always responds `410 Gone`.
+ *       Use `GET /api/payments/history` instead.
  *     deprecated: true
  *     tags: [Wallet]
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       200:
- *         description: Transaction list (deprecated response shape)
+ *       410:
+ *         description: Endpoint removed; see the `Link` header for the successor
  *       401:
  *         description: Unauthorized
  */
