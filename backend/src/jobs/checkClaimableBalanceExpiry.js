@@ -7,7 +7,6 @@ const { sendClaimableBalanceExpiringEmail } = require('../services/email');
 const WARN_HOURS = parseInt(process.env.CLAIMABLE_BALANCE_WARN_HOURS || '24', 10);
 
 async function notifyUser(userId, balanceId, expiresAt) {
-  if (!process.env.SMTP_HOST) return;
   try {
     const { rows } = await db.query('SELECT email, full_name FROM users WHERE id = $1', [userId]);
     if (!rows[0]) return;
@@ -55,6 +54,7 @@ async function checkClaimableBalanceExpiry(now = new Date()) {
     }
   }
 
+  // Claim each warning exactly once: mark and return in the same statement
   const { rows: expiringSoon } = await db.query(
     `UPDATE claimable_balances
      SET warning_sent_at = $1, updated_at = $1
