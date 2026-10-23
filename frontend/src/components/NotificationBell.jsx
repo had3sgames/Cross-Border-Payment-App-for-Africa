@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Inbox } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useNotifications } from '../hooks/useNotifications';
 
 export default function NotificationBell() {
+  const { t } = useTranslation();
   const { items, unreadCount, hasMore, loading, load, loadMore, markRead, markAllRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -23,8 +25,8 @@ export default function NotificationBell() {
       <button
         onClick={() => setOpen((o) => !o)}
         className="relative text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors"
-        title="Notifications"
-        aria-label={`Notifications${unreadCount ? ` (${unreadCount} unread)` : ''}`}
+        title={t('shared.notifications', 'Notifications')}
+        aria-label={`${t('shared.notifications', 'Notifications')}${unreadCount ? ` (${unreadCount})` : ''}`}
         aria-expanded={open}
       >
         <Inbox size={18} />
@@ -38,13 +40,13 @@ export default function NotificationBell() {
       {open && (
         <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-lg z-50">
           <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800">
-            <span className="text-sm font-semibold text-gray-900 dark:text-white">Notifications</span>
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">{t('shared.notifications', 'Notifications')}</span>
             {unreadCount > 0 && (
-              <button onClick={markAllRead} className="text-xs text-primary-500 hover:underline">Mark all read</button>
+              <button onClick={markAllRead} className="text-xs text-primary-500 hover:underline">{t('shared.markAllRead', 'Mark all read')}</button>
             )}
           </div>
           {items.length === 0 && !loading && (
-            <p className="px-4 py-6 text-sm text-center text-gray-500">No notifications yet</p>
+            <p className="px-4 py-6 text-sm text-center text-gray-500">{t('shared.noNotifications', 'No notifications yet')}</p>
           )}
           <ul>
             {items.map((n) => (
@@ -62,7 +64,7 @@ export default function NotificationBell() {
           </ul>
           {hasMore && (
             <button onClick={loadMore} disabled={loading} className="w-full py-2 text-xs text-primary-500 hover:underline disabled:opacity-50">
-              {loading ? 'Loading…' : 'Load more'}
+              {loading ? t('shared.loading', 'Loading…') : t('shared.loadMore', 'Load more')}
             </button>
           )}
         </div>

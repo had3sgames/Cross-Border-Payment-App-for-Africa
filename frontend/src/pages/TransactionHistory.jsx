@@ -43,13 +43,14 @@ const DATE_PRESETS = [
   { label: 'Last 30 days', getFrom: () => getDateDaysAgo(30), getTo: () => new Date().toISOString().split('T')[0] },
 ];
 
-function buildHistoryParams(cursor, dateFrom, dateTo, asset, statuses) {
+function buildHistoryParams(cursor, dateFrom, dateTo, asset, statuses, direction) {
   const params = { limit: 20 };
   if (cursor) params.cursor = cursor;
   if (dateFrom) params.from = dateFrom;
   if (dateTo) params.to = dateTo;
   if (asset) params.asset = asset;
   if (statuses && statuses.length > 0) params.status = statuses.join(',');
+  if (direction && direction !== 'all') params.direction = direction;
   return params;
 }
 
@@ -176,7 +177,7 @@ export default function TransactionHistory() {
 
     // Online — fetch fresh and persist
     try {
-      const params = buildHistoryParams(null, dateFrom, dateTo, asset, selectedStatuses);
+      const params = buildHistoryParams(null, dateFrom, dateTo, asset, selectedStatuses, filter);
       const r = await api.get('/payments/history', { params });
       const txList = r.data.transactions;
       setTransactions(txList);
@@ -185,7 +186,7 @@ export default function TransactionHistory() {
       setFromCache(false);
 
       // Only cache the unfiltered first page
-      if (!dateFrom && !dateTo && !asset && selectedStatuses.length === 0) {
+      if (!dateFrom && !dateTo && !asset && selectedStatuses.length === 0 && filter === 'all') {
         await setCacheEntry('history', txList);
       }
     } catch {
@@ -209,7 +210,7 @@ export default function TransactionHistory() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, asset, selectedStatuses, t]);
+  }, [dateFrom, dateTo, asset, selectedStatuses, filter, t]);
 
   useEffect(() => {
     fetchInitial();
@@ -227,7 +228,7 @@ export default function TransactionHistory() {
   const loadMore = useCallback(() => {
     if (nextCursor && !loadingMore) {
       setLoadingMore(true);
-      const params = buildHistoryParams(nextCursor, dateFrom, dateTo, asset);
+      const params = buildHistoryParams(nextCursor, dateFrom, dateTo, asset, selectedStatuses, filter);
       api
         .get('/payments/history', { params })
         .then((r) => {
@@ -238,7 +239,7 @@ export default function TransactionHistory() {
         .catch(() => {})
         .finally(() => setLoadingMore(false));
     }
-  }, [nextCursor, loadingMore, dateFrom, dateTo, asset]);
+  }, [nextCursor, loadingMore, dateFrom, dateTo, asset, selectedStatuses, filter]);
 
   // IntersectionObserver: load next page when sentinel scrolls into view
   useEffect(() => {
@@ -258,9 +259,6 @@ export default function TransactionHistory() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return transactions.filter((tx) => {
-      if (filter === 'sent' && tx.direction !== 'sent') return false;
-      if (filter === 'received' && tx.direction !== 'received') return false;
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(tx.status)) return false;
       if (!q) return true;
       const memo = (tx.memo || '').toLowerCase();
       const sender = (tx.sender_wallet || '').toLowerCase();
@@ -273,7 +271,7 @@ export default function TransactionHistory() {
         amountStr.includes(q)
       );
     });
-  }, [transactions, filter, search, selectedStatuses]);
+  }, [transactions, search]);
 
   async function handleExportCSV() {
     if (exporting) return;

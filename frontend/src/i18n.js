@@ -26,9 +26,11 @@ i18n.use(initReactI18next).init({
 
 i18n.on('languageChanged', (lng) => {
   document.documentElement.dir = RTL_LOCALES.includes(lng) ? 'rtl' : 'ltr';
+  document.documentElement.lang = lng;
 });
 
 if (typeof document !== 'undefined') {
+  document.documentElement.lang = i18n.language;
   document.documentElement.dir = RTL_LOCALES.includes(i18n.language) ? 'rtl' : 'ltr';
 }
 
