@@ -1,5 +1,6 @@
 {
   "common": {
+    "offline_cached": "You're offline — showing cached data",
     "back": "Back",
     "loading": "Loading...",
     "copied": "Copied!",

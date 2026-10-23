@@ -1,5 +1,6 @@
 {
   "common": {
+    "offline_cached": "Vous êtes hors ligne — données en cache affichées",
     "back": "Retour",
     "loading": "Chargement...",
     "copied": "Copié !",

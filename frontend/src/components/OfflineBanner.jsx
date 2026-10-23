@@ -149,8 +149,8 @@ export default function OfflineBanner({ onPaymentSynced }) {
   useEffect(() => {
     if (isOnline && wasOffline) {
       setShowBackOnline(true);
-      const t = setTimeout(() => setShowBackOnline(false), 4000);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => setShowBackOnline(false), 4000);
+      return () => clearTimeout(timer);
     }
   }, [isOnline, wasOffline]);
 
@@ -180,6 +180,7 @@ export default function OfflineBanner({ onPaymentSynced }) {
           className="bg-red-600 text-white text-xs font-semibold py-2 px-4 flex items-center justify-center gap-2"
         >
           <WifiOff size={14} aria-hidden="true" />
+          <span>{t('common.offline_cached', "You're offline — showing cached data")}</span>
           <span>{t('shared.offline', "You're offline — showing cached data")}</span>
           {queueCount > 0 && (
             <button

@@ -4,6 +4,7 @@ import { Toaster } from "react-hot-toast";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { CurrencyProvider } from "./context/CurrencyContext";
+import OfflineBanner from "./components/OfflineBanner";
 
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
@@ -181,46 +182,8 @@ function AppRoutes() {
 }
 
 export default function App() {
-  const [isOffline, setIsOffline] = useState(
-    typeof navigator !== "undefined" ? !navigator.onLine : false
-  );
-
-  useEffect(() => {
-    const handleOffline = () => setIsOffline(true);
-    const handleOnline = () => setIsOffline(false);
-
-    window.addEventListener("offline", handleOffline);
-    window.addEventListener("online", handleOnline);
-
-    return () => {
-      window.removeEventListener("offline", handleOffline);
-      window.removeEventListener("online", handleOnline);
-    };
-  }, []);
-
   return (
     <>
-      {isOffline && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            zIndex: 9999,
-            backgroundColor: "#b91c1c",
-            color: "#fff",
-            textAlign: "center",
-            padding: "10px 16px",
-            fontSize: "14px",
-            fontWeight: "500",
-          }}
-        >
-          You're offline. Some features may be unavailable.
-        </div>
-      )}
       <AuthProvider>
         <ThemeProvider>
           <CurrencyProvider>
@@ -238,6 +201,7 @@ export default function App() {
             <ConfirmProvider>
               <AppRoutes />
             </ConfirmProvider>
+            <OfflineBanner />
             <UpdateBanner />
           </BrowserRouter>
           </CurrencyProvider>
