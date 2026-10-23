@@ -9,7 +9,6 @@ import {
   Check,
   User,
   FileText,
-  Camera,
   ClipboardCheck,
 } from "lucide-react";
 import api from "../utils/api";
@@ -19,11 +18,12 @@ import toast from "react-hot-toast";
 const STEPS = [
   { id: 1, label: "Personal Info",    shortLabel: "1", Icon: User },
   { id: 2, label: "Document Upload",  shortLabel: "2", Icon: FileText },
-  { id: 3, label: "Selfie Capture",   shortLabel: "3", Icon: Camera },
-  { id: 4, label: "Review & Submit",  shortLabel: "4", Icon: ClipboardCheck },
+  { id: 3, label: "Review & Submit",  shortLabel: "3", Icon: ClipboardCheck },
 ];
 
 const SESSION_KEY = "afripay_kyc_step";
+const DOC_TYPES = ["image/jpeg", "image/png", "application/pdf"];
+const DOC_MAX_BYTES = 10 * 1024 * 1024;
 
 function KYCStepIndicator({ currentStep, completedSteps = [], onStepClick }) {
   return (
@@ -149,8 +149,10 @@ export default function KYCVerification() {
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     id_type: "", id_number: "", date_of_birth: "",
-    document_file: null, selfie_file: null,
+    document_file: null, document_expiry_date: "",
   });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [uploadPct, setUploadPct] = useState(0);
 
   // Restore step from sessionStorage (persists on refresh)
   const [currentStep, setCurrentStep] = useState(() => {
@@ -190,14 +192,31 @@ export default function KYCVerification() {
     persistStep(next, newCompleted);
   };
 
+  const handleDocumentChange = (e) => {
+    const file = e.target.files?.[0] ?? null;
+    let error;
+    if (file && !DOC_TYPES.includes(file.type)) error = "Only JPEG, PNG, or PDF files are allowed";
+    else if (file && file.size > DOC_MAX_BYTES) error = "File must be 10 MB or smaller";
+    setFieldErrors((prev) => ({ ...prev, document: error }));
+    setForm({ ...form, document_file: error ? null : file });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
+    setFieldErrors({});
+    setUploadPct(0);
     try {
-      await api.post("/kyc/submit", {
-        id_type:       form.id_type,
-        id_number:     form.id_number,
-        date_of_birth: form.date_of_birth,
+      const body = new FormData();
+      body.append("document", form.document_file);
+      body.append("id_type", form.id_type);
+      body.append("id_number", form.id_number);
+      body.append("date_of_birth", form.date_of_birth);
+      if (form.document_expiry_date) body.append("document_expiry_date", form.document_expiry_date);
+      await api.post("/kyc/submit", body, {
+        onUploadProgress: (ev) => {
+          if (ev.total) setUploadPct(Math.round((ev.loaded / ev.total) * 100));
+        },
       });
       toast.success("KYC submitted successfully. We will review your application shortly.");
       setKycStatus("pending");
@@ -205,7 +224,15 @@ export default function KYCVerification() {
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(`${SESSION_KEY}_completed`);
     } catch (err) {
-      toast.error(err.response?.data?.error || "Submission failed. Please try again.");
+      const list = err.response?.data?.errors;
+      if (Array.isArray(list) && list.length) {
+        const map = {};
+        list.forEach((x) => { map[x.path || x.param] = x.msg; });
+        setFieldErrors(map);
+        toast.error("Please correct the highlighted fields.");
+      } else {
+        toast.error(err.response?.data?.error || "Submission failed. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -260,10 +287,11 @@ export default function KYCVerification() {
                 {/* Step 1 — Personal Info */}
                 {currentStep === 1 && (
                   <>
-                    <h3 className="text-white font-semibold">Step 1 of 4 — Personal Info</h3>
+                    <h3 className="text-white font-semibold">Step 1 of 3 — Personal Info</h3>
                     <div>
-                      <label className="text-sm text-gray-400 mb-1 block">Date of Birth</label>
+                      <label htmlFor="kyc-dob" className="text-sm text-gray-400 mb-1 block">Date of Birth</label>
                       <input
+                        id="kyc-dob"
                         type="date"
                         required
                         max={new Date().toISOString().split("T")[0]}
@@ -286,7 +314,7 @@ export default function KYCVerification() {
                 {/* Step 2 — Document Upload */}
                 {currentStep === 2 && (
                   <>
-                    <h3 className="text-white font-semibold">Step 2 of 4 — Document Upload</h3>
+                    <h3 className="text-white font-semibold">Step 2 of 3 — Document Upload</h3>
                     <div>
                       <label className="text-sm text-gray-400 mb-1 block">ID Type</label>
                       <select
@@ -312,9 +340,34 @@ export default function KYCVerification() {
                         className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-primary-500 transition-colors"
                       />
                     </div>
+                    <div>
+                      <label htmlFor="kyc-document" className="text-sm text-gray-400 mb-1 block">ID Document (JPEG, PNG or PDF, max 10 MB)</label>
+                      <input
+                        id="kyc-document"
+                        type="file"
+                        accept="image/jpeg,image/png,application/pdf"
+                        onChange={handleDocumentChange}
+                        className="w-full text-sm text-gray-300"
+                      />
+                      {form.document_file && (
+                        <p className="text-green-400 text-xs mt-1">✓ {form.document_file.name}</p>
+                      )}
+                      {fieldErrors.document && <p role="alert" className="text-red-400 text-xs mt-1">{fieldErrors.document}</p>}
+                    </div>
+                    <div>
+                      <label htmlFor="kyc-doc-expiry" className="text-sm text-gray-400 mb-1 block">Document Expiry Date</label>
+                      <input
+                        id="kyc-doc-expiry"
+                        type="date"
+                        value={form.document_expiry_date}
+                        onChange={(e) => setForm({ ...form, document_expiry_date: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary-500 transition-colors [color-scheme:dark]"
+                      />
+                      {fieldErrors.document_expiry_date && <p role="alert" className="text-red-400 text-xs mt-1">{fieldErrors.document_expiry_date}</p>}
+                    </div>
                     <button
                       type="button"
-                      disabled={!form.id_type || !form.id_number}
+                      disabled={!form.id_type || !form.id_number || !form.document_file}
                       onClick={advanceStep}
                       className="w-full bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-3.5 rounded-xl transition-colors"
                     >
@@ -323,41 +376,10 @@ export default function KYCVerification() {
                   </>
                 )}
 
-                {/* Step 3 — Selfie Capture */}
+                {/* Step 3 — Review & Submit */}
                 {currentStep === 3 && (
                   <>
-                    <h3 className="text-white font-semibold">Step 3 of 4 — Selfie Capture</h3>
-                    <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 text-center text-gray-400 text-sm space-y-3">
-                      <Camera size={32} className="mx-auto text-primary-400" />
-                      <p>Take a clear selfie matching your ID document.</p>
-                      <label className="inline-block cursor-pointer bg-primary-500/20 hover:bg-primary-500/30 text-primary-300 px-4 py-2 rounded-lg text-sm transition-colors">
-                        Upload selfie
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="user"
-                          className="sr-only"
-                          onChange={(e) => setForm({ ...form, selfie_file: e.target.files?.[0] ?? null })}
-                        />
-                      </label>
-                      {form.selfie_file && (
-                        <p className="text-green-400 text-xs">✓ {form.selfie_file.name}</p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={advanceStep}
-                      className="w-full bg-primary-500 hover:bg-primary-600 text-white font-semibold py-3.5 rounded-xl transition-colors"
-                    >
-                      Continue
-                    </button>
-                  </>
-                )}
-
-                {/* Step 4 — Review & Submit */}
-                {currentStep === 4 && (
-                  <>
-                    <h3 className="text-white font-semibold">Step 4 of 4 — Review &amp; Submit</h3>
+                    <h3 className="text-white font-semibold">Step 3 of 3 — Review &amp; Submit</h3>
                     <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-gray-400">Date of Birth</span>
@@ -373,6 +395,17 @@ export default function KYCVerification() {
                         <span className="text-gray-400">ID Number</span>
                         <span className="text-white">{form.id_number || "—"}</span>
                       </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Document</span>
+                        <span className="text-white">{form.document_file?.name || "—"}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Expiry Date</span>
+                        <span className="text-white">{form.document_expiry_date || "—"}</span>
+                      </div>
+                      {["id_type", "id_number", "date_of_birth"].map((f) => fieldErrors[f] && (
+                        <p key={f} role="alert" className="text-red-400 text-xs">{fieldErrors[f]}</p>
+                      ))}
                     </div>
                     <div className="bg-gray-800 border border-gray-700 rounded-xl p-3">
                       <p className="text-xs text-gray-400 leading-relaxed">
@@ -385,6 +418,7 @@ export default function KYCVerification() {
                       disabled={submitting}
                       className="w-full bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-colors"
                     >
+                      {submitting && uploadPct > 0 && <span className="text-xs">{uploadPct}%</span>}
                       {submitting ? (
                         <div
                           className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"
