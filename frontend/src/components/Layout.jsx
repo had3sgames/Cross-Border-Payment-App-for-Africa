@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Outlet, NavLink, useNavigate, useLocation, useMatch } from 'react-router-dom';
 import { LayoutDashboard, Send, Download, Clock, Upload, User, LogOut, Sun, Moon, Bell, BellOff, AlertTriangle, ArrowUpDown, PiggyBank, Lock, Shield } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -9,19 +10,20 @@ import OfflineBanner from './OfflineBanner';
 import NotificationBell from './NotificationBell';
 
 const navItems = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/send', icon: Send, label: 'Send' },
-  { to: '/swap', icon: ArrowUpDown, label: 'Swap' },
-  { to: '/save', icon: PiggyBank, label: 'Save' },
-  { to: '/receive', icon: Download, label: 'Receive' },
-  { to: '/escrow', icon: Lock, label: 'Escrow' },
-  { to: '/history', icon: Clock, label: 'History' },
-  { to: '/profile', icon: User, label: 'Profile' },
+  { to: '/dashboard', icon: LayoutDashboard, labelKey: 'nav.dashboard' },
+  { to: '/send', icon: Send, labelKey: 'nav.send' },
+  { to: '/swap', icon: ArrowUpDown, labelKey: 'nav.swap' },
+  { to: '/save', icon: PiggyBank, labelKey: 'nav.save' },
+  { to: '/receive', icon: Download, labelKey: 'nav.receive' },
+  { to: '/escrow', icon: Lock, labelKey: 'nav.escrow' },
+  { to: '/history', icon: Clock, labelKey: 'nav.history' },
+  { to: '/profile', icon: User, labelKey: 'nav.profile' },
 ];
 
 const isTestnet = process.env.REACT_APP_STELLAR_NETWORK !== 'mainnet';
 
-function NavItem({ to, icon: Icon, label, user }) {
+function NavItem({ to, icon: Icon, labelKey, user }) {
+  const { t } = useTranslation();
   const match = useMatch(to);
   const isActive = !!match;
 
@@ -49,7 +51,7 @@ function NavItem({ to, icon: Icon, label, user }) {
           ) : (
             <Icon size={20} strokeWidth={innerActive ? 2.5 : 1.75} />
           )}
-          <span>{label}</span>
+          <span>{t(labelKey)}</span>
         </>
       )}
     </NavLink>
@@ -57,6 +59,7 @@ function NavItem({ to, icon: Icon, label, user }) {
 }
 
 export default function Layout() {
+  const { t } = useTranslation();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -67,14 +70,14 @@ export default function Layout() {
   const handleLogout = () => { logout(); navigate('/'); };
 
   const items = user?.role === 'admin'
-    ? [...navItems, { to: '/admin', icon: Shield, label: 'Admin' }]
+    ? [...navItems, { to: '/admin', icon: Shield, labelKey: 'nav.admin' }]
     : navItems;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col transition-colors duration-200">
       {isTestnet && (
         <div className="bg-yellow-400 text-yellow-900 text-center text-xs font-semibold py-1">
-          ⚠️ TESTNET — Do not use real funds
+          {t('layout.testnet')}
         </div>
       )}
       {/* Offline / back-online banner */}
@@ -83,14 +86,14 @@ export default function Layout() {
       {isDegraded && (
         <div className="bg-yellow-500 text-yellow-900 text-center text-xs font-semibold py-2 px-4 flex items-center justify-center gap-2">
           <AlertTriangle size={14} />
-          <span>Stellar network is experiencing issues. Payments may be delayed.</span>
+          <span>{t('layout.networkIssues')}</span>
           <a
             href="https://status.stellar.org"
             target="_blank"
             rel="noopener noreferrer"
             className="underline hover:text-yellow-800"
           >
-            Status Page
+            {t('layout.statusPage')}
           </a>
         </div>
       )}
@@ -102,12 +105,12 @@ export default function Layout() {
           <div className="flex items-center gap-1.5 ml-2 px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-[10px] font-medium border border-gray-200 dark:border-gray-700">
             <div className={`w-1.5 h-1.5 rounded-full ${isDegraded ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
             <span className="text-gray-600 dark:text-gray-400">
-              {isDegraded ? 'Degraded' : 'Network Active'}
+              {isDegraded ? t('layout.degraded') : t('layout.networkActive')}
             </span>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={toggleTheme} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors" title="Toggle theme">
+          <button onClick={toggleTheme} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors" title={t('layout.toggleTheme')} aria-label={t('layout.toggleTheme')}>
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <NotificationBell />
@@ -116,12 +119,13 @@ export default function Layout() {
               onClick={subscribed ? unsubscribe : subscribe}
               disabled={loading}
               className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors disabled:opacity-50"
-              title={subscribed ? 'Disable payment notifications' : 'Enable payment notifications'}
+              title={subscribed ? t('layout.disableNotifications') : t('layout.enableNotifications')}
+              aria-label={subscribed ? t('layout.disableNotifications') : t('layout.enableNotifications')}
             >
               {subscribed ? <Bell size={18} className="text-primary-500" /> : <BellOff size={18} />}
             </button>
           )}
-          <button onClick={handleLogout} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors" title="Logout">
+          <button onClick={handleLogout} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white transition-colors" title={t('layout.logout')} aria-label={t('layout.logout')}>
             <LogOut size={18} />
           </button>
         </div>
