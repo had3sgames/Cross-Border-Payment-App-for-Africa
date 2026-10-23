@@ -94,6 +94,12 @@ export function AuthProvider({ children }) {
     // Pending offline payments belong to this user — never leave them for the
     // next person who logs in on this device.
     await clearPaymentQueue().catch(() => {});
+    // Never leave cached API responses for the next user on this device.
+    if (typeof caches !== 'undefined') {
+      await caches.keys()
+        .then((keys) => Promise.all(keys.filter((k) => k.includes('api')).map((k) => caches.delete(k))))
+        .catch(() => {});
+    }
     setUser(null);
     Sentry.setUser(null);
   };

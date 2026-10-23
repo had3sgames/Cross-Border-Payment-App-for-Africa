@@ -130,6 +130,11 @@ app.use('/api/auth/login', rateLimiters.authLimiter);
 app.use('/api/auth/register', rateLimiters.authLimiter);
 
 app.use('/api/auth', authRoutes);
+// Authenticated wallet/payment data must never be cached (FE-162)
+app.use(['/api/wallet', '/api/payments'], (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 // Deprecated alias for /api/contacts (BE-188) — same router and middleware stack.
 const CONTACTS_SUNSET = 'Wed, 31 Mar 2027 00:00:00 GMT';
 app.use('/api/wallet/contacts', (req, res, next) => {

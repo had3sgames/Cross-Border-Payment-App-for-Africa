@@ -14,6 +14,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { WifiOff, Wifi, Clock, ChevronDown, X, Send, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -62,6 +63,7 @@ function QueueList({ items, onCancel, disabled }) {
 }
 
 export default function OfflineBanner({ onPaymentSynced }) {
+  const { t } = useTranslation();
   const { isOnline, wasOffline } = useOnlineStatus({ onPaymentSynced });
   const { user } = useAuth() || {};
   const userId = user?.id ?? null;
@@ -146,8 +148,8 @@ export default function OfflineBanner({ onPaymentSynced }) {
   useEffect(() => {
     if (isOnline && wasOffline) {
       setShowBackOnline(true);
-      const t = setTimeout(() => setShowBackOnline(false), 4000);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => setShowBackOnline(false), 4000);
+      return () => clearTimeout(timer);
     }
   }, [isOnline, wasOffline]);
 
@@ -177,7 +179,7 @@ export default function OfflineBanner({ onPaymentSynced }) {
           className="bg-red-600 text-white text-xs font-semibold py-2 px-4 flex items-center justify-center gap-2"
         >
           <WifiOff size={14} aria-hidden="true" />
-          <span>You're offline — showing cached data</span>
+          <span>{t('common.offline_cached', "You're offline — showing cached data")}</span>
           {queueCount > 0 && (
             <button
               type="button"
