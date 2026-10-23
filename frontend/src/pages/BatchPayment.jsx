@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, CheckCircle, CheckCircle2, Download, FileUp, Loader2, Plus, RotateCcw, Send, Trash2, Upload, XCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useTranslation } from 'react-i18next';
+import i18n from '../i18n';
 import api from '../utils/api';
 import { CURRENCIES, truncateAddress } from '../utils/currency';
 import { validateStellarAddress } from '../utils/validation';
@@ -47,21 +49,21 @@ function splitCsvLine(line) {
 
 function validateAmount(amount) {
   if (!amount && amount !== 0) {
-    return 'Amount is required';
+    return i18n.t('batch.amountRequired');
   }
   
   const numAmount = parseFloat(amount);
   
   if (isNaN(numAmount)) {
-    return 'Amount must be a valid number';
+    return i18n.t('batch.amountNumber');
   }
   
   if (numAmount <= 0) {
-    return 'Amount must be a positive number';
+    return i18n.t('batch.amountPositive');
   }
   
   if (numAmount > SINGLE_TRANSFER_LIMIT) {
-    return `Amount exceeds single-transfer limit of ${SINGLE_TRANSFER_LIMIT.toLocaleString()} USDC`;
+    return i18n.t('batch.amountLimit', { limit: SINGLE_TRANSFER_LIMIT.toLocaleString(i18n.language) });
   }
   
   return null;
@@ -111,7 +113,7 @@ function parseRecipientsCsv(text) {
   const memoIndex = headers.findIndex((header) => header === 'memo');
 
   if (addressIndex === -1 || amountIndex === -1) {
-    throw new Error('CSV must include address and amount columns.');
+    throw new Error(i18n.t('batch.csvColumns'));
   }
 
   const recipients = [];
@@ -156,10 +158,11 @@ GXYZ234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ234567890ABCD,250.75,Another example`;
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  toast.success('Template downloaded');
+  toast.success(i18n.t('batch.templateDownloaded'));
 }
 
 export default function BatchPayment() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { requestStepUp, stepUpModal } = useStepUp();
   const [asset, setAsset] = useState('XLM');
@@ -228,7 +231,7 @@ export default function BatchPayment() {
     } catch (err) {
       setRowStatuses((prev) => ({
         ...prev,
-        [rowIndex]: { status: 'failed', error: err.response?.data?.error || 'Retry failed' },
+        [rowIndex]: { status: 'failed', error: err.response?.data?.error || t('batch.retryFailed') },
       }));
     }
   };
@@ -288,7 +291,7 @@ export default function BatchPayment() {
       const { recipients: parsed, errors } = parseRecipientsCsv(text);
       
       if (!parsed.length) {
-        toast.error('No recipients found in the CSV file');
+        toast.error(t('batch.noRecipientsCsv'));
         return;
       }
 
@@ -297,12 +300,12 @@ export default function BatchPayment() {
       setResults(null);
       
       if (errors.length > 0) {
-        toast.error(`Found ${errors.length} validation error${errors.length > 1 ? 's' : ''} in CSV`);
+        toast.error(t('batch.csvErrors', { count: errors.length }));
       } else {
-        toast.success(`Imported ${Math.min(parsed.length, MAX_BATCH_SIZE)} recipients`);
+        toast.success(t('batch.imported', { count: Math.min(parsed.length, MAX_BATCH_SIZE) }));
       }
     } catch (error) {
-      toast.error(error.message || 'Failed to parse CSV file');
+      toast.error(error.message || t('batch.csvParseFailed'));
     } finally {
       event.target.value = '';
     }
@@ -337,14 +340,14 @@ export default function BatchPayment() {
     event.preventDefault();
 
     if (!filledRecipients.length) {
-      toast.error('Add at least one recipient');
+      toast.error(t('batch.addOne'));
       return;
     }
 
     // Validate before submission
     const isValid = validateCurrentRecipients();
     if (!isValid) {
-      toast.error('Fix validation errors before submitting');
+      toast.error(t('batch.fixToSubmit'));
       return;
     }
 
@@ -371,7 +374,7 @@ export default function BatchPayment() {
       });
       const data = response.data;
       setResults(data);
-      toast.success(data.message || 'Batch payment submitted');
+      toast.success(data.message || t('batch.submitted'));
 
       if (data.batch_id) {
         setBatchId(data.batch_id);
@@ -385,7 +388,7 @@ export default function BatchPayment() {
       if (responseData?.results) {
         setResults(responseData);
       }
-      toast.error(responseData?.error || responseData?.message || 'Batch payment failed');
+      toast.error(responseData?.error || responseData?.message || t('batch.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -394,16 +397,16 @@ export default function BatchPayment() {
   return (
     <div className="px-4 py-6 max-w-5xl mx-auto space-y-6 pb-24">
       <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-white flex items-center gap-1">
-        <ArrowLeft size={18} /> Back
+        <ArrowLeft size={18} /> {t('batch.back')}
       </button>
 
       <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-primary-400">Bulk payouts</p>
-            <h1 className="text-3xl font-bold text-white">Batch Payments</h1>
+            <p className="text-sm uppercase tracking-[0.2em] text-primary-400">{t('batch.bulk')}</p>
+            <h1 className="text-3xl font-bold text-white">{t('batch.title')}</h1>
             <p className="text-gray-400 mt-2 max-w-2xl">
-              Upload a CSV or paste recipients manually to send up to {MAX_BATCH_SIZE} Stellar payments in one transaction.
+              {t('batch.intro', { max: MAX_BATCH_SIZE })}
             </p>
           </div>
 
@@ -414,11 +417,11 @@ export default function BatchPayment() {
               className="inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-600 text-white px-4 py-3 rounded-2xl transition-colors"
             >
               <Download size={18} />
-              <span className="hidden md:inline">Template</span>
+              <span className="hidden md:inline">{t('batch.template')}</span>
             </button>
             <label className="inline-flex items-center gap-2 bg-primary-500 hover:bg-primary-600 text-white px-4 py-3 rounded-2xl cursor-pointer transition-colors">
               <Upload size={18} />
-              <span>Import CSV</span>
+              <span>{t('batch.importCsv')}</span>
               <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvUpload} />
             </label>
           </div>
@@ -427,7 +430,7 @@ export default function BatchPayment() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <label className="text-sm text-gray-400 mb-2 block">Asset</label>
+              <label className="text-sm text-gray-400 mb-2 block">{t('batch.asset')}</label>
               <select
                 value={asset}
                 onChange={(event) => setAsset(event.target.value)}
@@ -442,14 +445,14 @@ export default function BatchPayment() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="text-sm text-gray-400 mb-2 block">Transaction memo (optional)</label>
+              <label className="text-sm text-gray-400 mb-2 block">{t('batch.memoLabel')}</label>
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
                 <input
                   type="text"
                   value={memo}
                   onChange={(event) => setMemo(event.target.value)}
                   maxLength={memoType === 'text' ? 28 : 64}
-                  placeholder="Payroll for April"
+                  placeholder={t('batch.memoPlaceholder')}
                   className="w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-white placeholder-gray-500"
                 />
                 <select
@@ -457,7 +460,7 @@ export default function BatchPayment() {
                   onChange={(event) => setMemoType(event.target.value)}
                   className="w-full bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3 text-white"
                 >
-                  <option value="text">Text</option>
+                  <option value="text">{t('batch.memoText')}</option>
                   <option value="id">ID</option>
                   <option value="hash">Hash</option>
                   <option value="return">Return</option>
@@ -472,8 +475,8 @@ export default function BatchPayment() {
               <div className="flex items-center gap-3 px-4 py-3 bg-red-900/30 border-b border-red-500/50">
                 <AlertCircle size={20} className="text-red-400" />
                 <div>
-                  <p className="text-red-300 font-semibold">Validation Errors</p>
-                  <p className="text-xs text-red-400">{validationErrors.length} row{validationErrors.length > 1 ? 's' : ''} with errors - fix before submitting</p>
+                  <p className="text-red-300 font-semibold">{t('batch.validationErrors')}</p>
+                  <p className="text-xs text-red-400">{t('batch.rowsWithErrors', { count: validationErrors.length })}</p>
                 </div>
               </div>
               
@@ -481,10 +484,10 @@ export default function BatchPayment() {
                 <table className="w-full">
                   <thead className="bg-red-900/20 border-b border-red-500/50">
                     <tr className="text-left">
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">Row</th>
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">Address</th>
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">Amount</th>
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">Error</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">{t('batch.row')}</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">{t('batch.address')}</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">{t('batch.amount')}</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-red-300">{t('batch.error')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-red-500/30">
@@ -492,10 +495,10 @@ export default function BatchPayment() {
                       <tr key={index} className="hover:bg-red-900/20">
                         <td className="px-4 py-3 text-red-200 font-mono text-sm">{error.rowNumber}</td>
                         <td className="px-4 py-3 text-red-200 font-mono text-sm truncate max-w-xs" title={error.address}>
-                          {error.address || <span className="text-red-400 italic">empty</span>}
+                          {error.address || <span className="text-red-400 italic">{t('batch.empty')}</span>}
                         </td>
                         <td className="px-4 py-3 text-red-200 font-mono text-sm">
-                          {error.amount || <span className="text-red-400 italic">empty</span>}
+                          {error.amount || <span className="text-red-400 italic">{t('batch.empty')}</span>}
                         </td>
                         <td className="px-4 py-3 text-red-300 text-sm">{error.error}</td>
                       </tr>
@@ -512,8 +515,8 @@ export default function BatchPayment() {
               <div className="flex items-center gap-3 px-4 py-3 bg-green-900/30 border-b border-green-500/50">
                 <CheckCircle size={20} className="text-green-400" />
                 <div>
-                  <p className="text-green-300 font-semibold">Ready to Send</p>
-                  <p className="text-xs text-green-400">{validRecipients.length} valid row{validRecipients.length > 1 ? 's' : ''} • Total: {totalAmount.toFixed(7)} {asset}</p>
+                  <p className="text-green-300 font-semibold">{t('batch.readyToSend')}</p>
+                  <p className="text-xs text-green-400">{t('batch.validRows', { count: validRecipients.length, total: totalAmount.toFixed(7), asset })}</p>
                 </div>
               </div>
               
@@ -521,8 +524,8 @@ export default function BatchPayment() {
                 <table className="w-full">
                   <thead className="bg-green-900/20 border-b border-green-500/50">
                     <tr className="text-left">
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-green-300">Address</th>
-                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-green-300">Amount</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-green-300">{t('batch.address')}</th>
+                      <th className="px-4 py-3 text-xs uppercase tracking-wider text-green-300">{t('batch.amount')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-green-500/30">
@@ -537,7 +540,7 @@ export default function BatchPayment() {
                     {validRecipients.length > 5 && (
                       <tr>
                         <td colSpan="2" className="px-4 py-3 text-center text-green-400 text-sm italic">
-                          ...and {validRecipients.length - 5} more
+                          {t('batch.andMore', { count: validRecipients.length - 5 })}
                         </td>
                       </tr>
                     )}
@@ -550,11 +553,11 @@ export default function BatchPayment() {
           <div className="bg-gray-950 border border-gray-800 rounded-3xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
               <div>
-                <p className="text-sm text-gray-400">Recipients</p>
+                <p className="text-sm text-gray-400">{t('batch.recipients')}</p>
                 <p className="text-xs text-gray-500">
-                  {filledRecipients.length}/{MAX_BATCH_SIZE} recipients
+                  {t('batch.recipientCount', { count: filledRecipients.length, max: MAX_BATCH_SIZE })}
                   {recipients.length >= MAX_BATCH_SIZE && (
-                    <span className="ml-2 text-yellow-400 font-medium">Batch limit reached</span>
+                    <span className="ml-2 text-yellow-400 font-medium">{t('batch.limitReached')}</span>
                   )}
                 </p>
               </div>
@@ -563,17 +566,17 @@ export default function BatchPayment() {
                 onClick={addRecipient}
                 disabled={recipients.length >= MAX_BATCH_SIZE}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                title={recipients.length >= MAX_BATCH_SIZE ? `Maximum batch size of ${MAX_BATCH_SIZE} recipients reached` : 'Add recipient'}
+                title={recipients.length >= MAX_BATCH_SIZE ? t('batch.maxReached', { max: MAX_BATCH_SIZE }) : t('batch.addRecipient')}
               >
-                <Plus size={16} /> Add row
+                <Plus size={16} /> {t('batch.addRow')}
               </button>
             </div>
 
             <div className="hidden md:grid md:grid-cols-[80px_minmax(0,1fr)_180px_72px] gap-3 px-4 py-3 text-xs uppercase tracking-[0.2em] text-gray-500 border-b border-gray-800">
-              <span>Row</span>
-              <span>Recipient Address</span>
-              <span>Amount</span>
-              <span>Delete</span>
+              <span>{t('batch.row')}</span>
+              <span>{t('batch.recipientAddress')}</span>
+              <span>{t('batch.amount')}</span>
+              <span>{t('batch.delete')}</span>
             </div>
 
             <div className="divide-y divide-gray-800 max-h-[600px] overflow-y-auto">
@@ -600,7 +603,7 @@ export default function BatchPayment() {
                     type="button"
                     onClick={() => removeRecipient(index)}
                     className="inline-flex items-center justify-center h-12 rounded-2xl bg-gray-900 border border-gray-700 text-red-400 hover:text-red-300"
-                    aria-label={`Remove recipient ${index + 1}`}
+                    aria-label={t('batch.removeRecipient', { n: index + 1 })}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -611,19 +614,19 @@ export default function BatchPayment() {
 
           <div className="grid gap-4 md:grid-cols-3">
             <div className="bg-gray-950 border border-gray-800 rounded-2xl p-4">
-              <p className="text-gray-500 text-sm">Valid Recipients</p>
+              <p className="text-gray-500 text-sm">{t('batch.validRecipients')}</p>
               <p className="text-2xl font-semibold text-white mt-1">{validRecipients.length}</p>
               {validationErrors.length > 0 && (
-                <p className="text-xs text-red-400 mt-1">{validationErrors.length} invalid</p>
+                <p className="text-xs text-red-400 mt-1">{t('batch.invalid', { count: validationErrors.length })}</p>
               )}
             </div>
             <div className="bg-gray-950 border border-gray-800 rounded-2xl p-4">
-              <p className="text-gray-500 text-sm">Total amount</p>
+              <p className="text-gray-500 text-sm">{t('batch.totalAmount')}</p>
               <p className="text-2xl font-semibold text-white mt-1">{totalAmount.toFixed(7)} {asset}</p>
             </div>
             <div className="bg-gray-950 border border-gray-800 rounded-2xl p-4">
-              <p className="text-gray-500 text-sm">Transaction shape</p>
-              <p className="text-white mt-1">One Stellar transaction, up to {MAX_BATCH_SIZE} payment operations.</p>
+              <p className="text-gray-500 text-sm">{t('batch.shape')}</p>
+              <p className="text-white mt-1">{t('batch.shapeValue', { max: MAX_BATCH_SIZE })}</p>
             </div>
           </div>
 
@@ -631,10 +634,10 @@ export default function BatchPayment() {
             type="submit"
             disabled={submitting || !validRecipients.length || hasInvalidRows}
             className="w-full md:w-auto inline-flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-2xl font-semibold"
-            title={hasInvalidRows ? 'Fix validation errors before submitting' : ''}
+            title={hasInvalidRows ? t('batch.fixToSubmit') : ''}
           >
             {submitting ? <FileUp size={18} className="animate-pulse" /> : <Send size={18} />}
-            {hasInvalidRows ? 'Fix Errors to Submit' : 'Submit Batch'}
+            {hasInvalidRows ? t('batch.fixErrors') : t('batch.submit')}
           </button>
         </form>
       </div>
@@ -643,28 +646,28 @@ export default function BatchPayment() {
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6 space-y-5">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-2xl font-bold text-white">Batch Results</h2>
+              <h2 className="text-2xl font-bold text-white">{t('batch.results')}</h2>
               {batchId ? (
                 <div className="flex items-center gap-4 mt-1 text-sm">
-                  <span className="text-green-400">{batchSummary.confirmed} confirmed</span>
-                  <span className="text-red-400">{batchSummary.failed} failed</span>
+                  <span className="text-green-400">{t('batch.confirmedCount', { count: batchSummary.confirmed })}</span>
+                  <span className="text-red-400">{t('batch.failedCount', { count: batchSummary.failed })}</span>
                   {batchSummary.processing > 0 && (
                     <span className="text-blue-400 flex items-center gap-1">
                       <Loader2 size={13} className="animate-spin" />
-                      {batchSummary.processing} processing
+                      {t('batch.processingCount', { count: batchSummary.processing })}
                     </span>
                   )}
                 </div>
               ) : (
                 <p className="text-gray-400 mt-1">
-                  {results.summary?.successful || 0} succeeded, {results.summary?.failed || 0} failed.
+                  {t('batch.summary', { ok: results.summary?.successful || 0, failed: results.summary?.failed || 0 })}
                 </p>
               )}
             </div>
             <div className="flex items-center gap-3">
               {results.transaction?.tx_hash && (
                 <div className="text-sm text-gray-400">
-                  <p>Ledger {results.transaction.ledger}</p>
+                  <p>{t('batch.ledger', { ledger: results.transaction.ledger })}</p>
                   <p className="font-mono text-xs">{results.transaction.tx_hash}</p>
                 </div>
               )}
@@ -674,7 +677,7 @@ export default function BatchPayment() {
                   onClick={exportBatchCsv}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm transition-colors"
                 >
-                  <Download size={15} /> Export CSV
+                  <Download size={15} /> {t('batch.exportCsv')}
                 </button>
               )}
             </div>
@@ -704,7 +707,7 @@ export default function BatchPayment() {
                   <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
                     <div>
                       <p className="text-white font-medium">
-                        Row {result.index + 1}: {truncateAddress(result.recipient_address, 10)}
+                        {t('batch.rowN', { n: result.index + 1, address: truncateAddress(result.recipient_address, 10) })}
                       </p>
                       <p className="text-sm text-gray-300">{result.amount} {asset}</p>
                     </div>
@@ -719,7 +722,7 @@ export default function BatchPayment() {
                         isPending ? 'text-yellow-400' :
                         'text-blue-400'
                       }>
-                        {isConfirmed ? 'Confirmed' : isFailed ? 'Failed' : isPending ? 'Pending' : 'Processing'}
+                        {isConfirmed ? t('batch.confirmed') : isFailed ? t('batch.failed') : isPending ? t('batch.pending') : t('batch.processing')}
                       </span>
                       {isFailed && batchId && (
                         <button
@@ -727,7 +730,7 @@ export default function BatchPayment() {
                           onClick={() => handleRetry(result.index)}
                           className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs transition-colors"
                         >
-                          <RotateCcw size={12} /> Retry
+                          <RotateCcw size={12} /> {t('batch.retry')}
                         </button>
                       )}
                     </div>

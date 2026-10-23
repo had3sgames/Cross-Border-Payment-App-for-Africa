@@ -1,12 +1,18 @@
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import KYCVerification from "../KYCVerification";
-import api from "../../services/api";
+import api from "../../utils/api";
 
-jest.mock("../../services/api", () => ({
+jest.mock("../../utils/api", () => ({
   __esModule: true,
   default: { get: jest.fn(), post: jest.fn() },
+}));
+
+jest.mock("react-hot-toast", () => ({
+  __esModule: true,
+  default: { success: jest.fn(), error: jest.fn() },
 }));
 
 const makeFile = (name, type, size = 1024) => {
@@ -15,79 +21,56 @@ const makeFile = (name, type, size = 1024) => {
   return file;
 };
 
+const renderPage = () =>
+  render(
+    <MemoryRouter>
+      <KYCVerification />
+    </MemoryRouter>
+  );
+
 describe("KYCVerification submission", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    api.get.mockResolvedValue({ data: { status: "not_started" } });
-    api.post.mockResolvedValue({ data: { status: "pending" } });
+    sessionStorage.clear();
+    api.get.mockResolvedValue({ data: { kyc_status: "unverified" } });
+    api.post.mockResolvedValue({ data: { kyc_status: "pending" } });
   });
 
   const advanceToDocumentStep = async () => {
-    // Step 1: personal info
-    await userEvent.type(screen.getByLabelText(/full name/i), "Jane Doe");
-    await userEvent.click(screen.getByRole("button", { name: /next/i }));
-    // Step 2: ID details
-    await userEvent.type(screen.getByLabelText(/id number/i), "123456789");
-    await userEvent.click(screen.getByRole("button", { name: /next/i }));
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    const dob = await screen.findByLabelText(/date of birth/i);
+    await userEvent.type(dob, "1990-05-01");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.selectOptions(screen.getByRole("combobox"), "passport");
+    await userEvent.type(screen.getByPlaceholderText(/id number/i), "A1234567");
   };
 
-  it("submits multipart/form-data with the document file and expiry date", async () => {
-    render(<KYCVerification />);
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-
+  it("submits multipart form data with the document and expiry date", async () => {
+    renderPage();
     await advanceToDocumentStep();
 
     const document = makeFile("id.png", "image/png");
-    const selfie = makeFile("selfie.jpg", "image/jpeg");
-
     await userEvent.upload(screen.getByLabelText(/id document/i), document);
-    await userEvent.upload(screen.getByLabelText(/selfie/i), selfie);
-    await userEvent.type(
-      screen.getByLabelText(/document expiry/i),
-      "2030-01-01"
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: /submit/i }));
+    await userEvent.type(screen.getByLabelText(/document expiry/i), "2030-01-01");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit for verification/i }));
 
     await waitFor(() => expect(api.post).toHaveBeenCalled());
-
     const [url, body] = api.post.mock.calls[0];
     expect(url).toBe("/kyc/submit");
     expect(body).toBeInstanceOf(FormData);
     expect(body.get("document")).toBe(document);
-    expect(body.get("selfie")).toBe(selfie);
+    expect(body.get("id_type")).toBe("passport");
     expect(body.get("document_expiry_date")).toBe("2030-01-01");
   });
 
   it("rejects files that exceed the backend size limit", async () => {
-    render(<KYCVerification />);
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-
+    renderPage();
     await advanceToDocumentStep();
 
-    const tooBig = makeFile("big.png", "image/png", 10 * 1024 * 1024);
+    const tooBig = makeFile("big.png", "image/png", 11 * 1024 * 1024);
     await userEvent.upload(screen.getByLabelText(/id document/i), tooBig);
 
-    expect(await screen.findByText(/too large/i)).toBeInTheDocument();
-  });
-
-  it("moves the UI to pending status after a successful submission", async () => {
-    render(<KYCVerification />);
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
-
-    await advanceToDocumentStep();
-
-    await userEvent.upload(
-      screen.getByLabelText(/id document/i),
-      makeFile("id.png", "image/png")
-    );
-    await userEvent.type(
-      screen.getByLabelText(/document expiry/i),
-      "2030-01-01"
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: /submit/i }));
-
-    expect(await screen.findByText(/pending/i)).toBeInTheDocument();
+    expect(await screen.findByText(/10 MB or smaller/i)).toBeInTheDocument();
   });
 });

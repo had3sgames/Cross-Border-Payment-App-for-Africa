@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -25,6 +26,7 @@ const getFocusable = (root) =>
  *   reached by keyboard or assistive technology.
  */
 export default function ConfirmModal({ isOpen, onClose, onConfirm, title, message, confirmLabel, confirmVariant, loading, children }) {
+  const { t } = useTranslation();
   const titleId = useId();
   const messageId = useId();
   const rootRef = useRef(null);
@@ -128,7 +130,7 @@ export default function ConfirmModal({ isOpen, onClose, onConfirm, title, messag
             type="button"
             onClick={cancel}
             disabled={loading}
-            aria-label="Close"
+            aria-label={t('shared.close', 'Close')}
             className="text-gray-400 hover:text-white transition-colors disabled:opacity-50"
           >
             <X size={24} aria-hidden="true" />
@@ -149,7 +151,7 @@ export default function ConfirmModal({ isOpen, onClose, onConfirm, title, messag
               disabled={loading}
               className="flex-1 bg-gray-800 hover:bg-gray-700 rounded-xl py-3 text-white font-medium transition-colors disabled:opacity-50"
             >
-              Cancel
+              {t('shared.cancel', 'Cancel')}
             </button>
             <button
               type="button"
@@ -161,7 +163,7 @@ export default function ConfirmModal({ isOpen, onClose, onConfirm, title, messag
               {loading ? (
                 <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" role="status" aria-label="Loading" />
               ) : (
-                confirmLabel || 'Confirm'
+                confirmLabel || t('shared.confirm', 'Confirm')
               )}
             </button>
           </div>

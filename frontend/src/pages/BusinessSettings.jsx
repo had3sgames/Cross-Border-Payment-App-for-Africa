@@ -12,7 +12,6 @@ import toast from 'react-hot-toast';
 export default function BusinessSettings() {
   const confirm = useConfirm();
   const { t } = useTranslation();
-  const { user, setUser } = useAuth();
   const { user, updateUser } = useAuth();
   const navigate = useNavigate();
   const [signers, setSigners] = useState([]);

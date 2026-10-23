@@ -27,7 +27,7 @@ const { verifyToken } = require('../services/twofa');
 const { comparePIN } = require('../services/pin');
 
 
-const MAX_WALLETS_PER_USER = 5;
+const MAX_WALLETS_PER_USER = parseInt(process.env.MAX_WALLETS_PER_USER || '5', 10);
 
 /**
  * Resolve which wallet to use for the authenticated user.
@@ -169,28 +169,38 @@ async function createWalletHandler(req, res, next) {
     const { label } = req.body;
     const walletLabel = (label || '').trim() || 'Wallet';
 
-    // Enforce per-user limit
-    const countResult = await db.query(
-      'SELECT COUNT(*) AS count FROM wallets WHERE user_id = $1',
-      [req.user.userId],
-    );
-    const currentCount = parseInt(countResult.rows[0].count, 10);
-    if (currentCount >= MAX_WALLETS_PER_USER) {
-      return res.status(400).json({
-        error: `You can have at most ${MAX_WALLETS_PER_USER} wallets per account.`,
-        code: 'WALLET_LIMIT_REACHED',
-      });
-    }
-
-    // Generate a new Stellar keypair and fund on testnet
+    // Generate a new Stellar keypair and fund on testnet (outside the transaction)
     const { publicKey, encryptedSecretKey } = await generateWallet();
 
     const walletId = uuidv4();
-    await db.query(
-      `INSERT INTO wallets (id, user_id, public_key, encrypted_secret_key, label, is_default)
-       VALUES ($1, $2, $3, $4, $5, false)`,
-      [walletId, req.user.userId, publicKey, encryptedSecretKey, walletLabel],
-    );
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Serialise wallet creation per user so the count check cannot race
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [req.user.userId]);
+      const countResult = await client.query(
+        'SELECT COUNT(*) AS count FROM wallets WHERE user_id = $1',
+        [req.user.userId],
+      );
+      if (parseInt(countResult.rows[0].count, 10) >= MAX_WALLETS_PER_USER) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `You can have at most ${MAX_WALLETS_PER_USER} wallets per account.`,
+          code: 'WALLET_LIMIT_REACHED',
+        });
+      }
+      await client.query(
+        `INSERT INTO wallets (id, user_id, public_key, encrypted_secret_key, label, is_default)
+         VALUES ($1, $2, $3, $4, $5, false)`,
+        [walletId, req.user.userId, publicKey, encryptedSecretKey, walletLabel],
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
 
     audit.log(req.user.userId, 'wallet_created', req.ip, req.headers['user-agent'], { wallet_id: walletId });
 
@@ -258,29 +268,16 @@ async function getQRCode(req, res, next) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /wallet/transactions  (optionally ?wallet_id=<uuid>)
-// DEPRECATED — use GET /api/payments/history instead
+// GET /wallet/transactions
+// REMOVED (BE-175) — sunset 2026-01-01. Responds 410 Gone pointing to
+// GET /api/payments/history.
 // ---------------------------------------------------------------------------
-async function getWalletTransactions(req, res, next) {
-  try {
-    res.set('Deprecation', 'true');
-    res.set('Link', '</api/payments/history>; rel="successor-version"');
-    res.set('Sunset', 'Sat, 01 Jan 2026 00:00:00 GMT');
-
-    const wallet = await resolveWallet(req.user.userId, req.query.wallet_id || null);
-    if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
-
-    const txResult = await db.query(
-      `SELECT * FROM transactions
-       WHERE sender_wallet = $1 OR recipient_wallet = $1
-       ORDER BY created_at DESC LIMIT 50`,
-      [wallet.public_key],
-    );
-
-    res.json({ transactions: txResult.rows });
-  } catch (err) {
-    next(err);
-  }
+function getWalletTransactions(req, res) {
+  res.set('Link', '</api/payments/history>; rel="successor-version"');
+  res.status(410).json({
+    error: 'This endpoint has been removed. Use GET /api/payments/history instead.',
+    successor: '/api/payments/history',
+  });
 }
 
 // ---------------------------------------------------------------------------

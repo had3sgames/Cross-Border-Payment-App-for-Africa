@@ -181,6 +181,7 @@ const fraudRuleErrorsTotal = new client.Counter({
 
 module.exports = {
   registry,
+  redisUp,
   httpRequestDuration,
   horizonRequestDuration,
   dbQueryDuration,

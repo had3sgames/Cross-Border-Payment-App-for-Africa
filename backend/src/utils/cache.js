@@ -1,5 +1,5 @@
-const Redis = require('ioredis');
 const logger = require('./logger');
+const { getRedisClient } = require('./redisClient');
 
 // Read balance cache TTL from environment, default to 30 seconds
 const BALANCE_TTL = parseInt(process.env.BALANCE_CACHE_TTL_SECONDS || '30', 10);
@@ -8,28 +8,50 @@ let client = null;
 const localOneTimeKeys = new Map();
 
 function getClient() {
-  if (client) return client;
+  return getRedisClient(); // null when REDIS_URL is not configured
+}
 
-  if (!process.env.REDIS_URL) {
-    return null; // Redis not configured — fall back to live calls
+// BE-172: in-process fallback used only when REDIS_URL is unset (development;
+// production requires REDIS_URL). Keeps token revocation and WebAuthn
+// challenges working on a single instance instead of silently doing nothing.
+const memory = new Map();
+
+function memGet(key) {
+  const entry = memory.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    memory.delete(key);
+    return null;
   }
+  return entry.value;
+}
 
-  client = new Redis(process.env.REDIS_URL, {
-    lazyConnect: true,
-    enableOfflineQueue: false,
-    maxRetriesPerRequest: 1,
-  });
+function memSet(key, value, ttlSeconds) {
+  memory.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+}
 
-  client.on('error', (err) => {
-    logger.warn('Redis error — falling back to live calls', { error: err.message });
-  });
+function memDelPattern(pattern) {
+  const re = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  for (const key of memory.keys()) {
+    if (re.test(key)) memory.delete(key);
+  }
+}
 
-  return client;
+/**
+ * BE-172: like get(), but rethrows Redis errors so security-critical callers
+ * (token revocation, WebAuthn challenges) can fail closed instead of
+ * treating an outage as "key not found".
+ */
+async function getStrict(key) {
+  const redis = getClient();
+  if (!redis) return memGet(key);
+  const value = await redis.get(key);
+  return value ? JSON.parse(value) : null;
 }
 
 async function get(key) {
   const redis = getClient();
-  if (!redis) return null;
+  if (!redis) return memGet(key);
   try {
     const value = await redis.get(key);
     return value ? JSON.parse(value) : null;
@@ -41,7 +63,7 @@ async function get(key) {
 
 async function set(key, value, ttlSeconds = BALANCE_TTL) {
   const redis = getClient();
-  if (!redis) return;
+  if (!redis) return memSet(key, value, ttlSeconds);
   try {
     await redis.set(key, JSON.stringify(value), 'EX', ttlSeconds);
   } catch (err) {
@@ -51,7 +73,7 @@ async function set(key, value, ttlSeconds = BALANCE_TTL) {
 
 async function del(key) {
   const redis = getClient();
-  if (!redis) return;
+  if (!redis) return memory.delete(key);
   try {
     await redis.del(key);
   } catch (err) {
@@ -85,7 +107,7 @@ async function setIfAbsent(key, value, ttlSeconds) {
 // documented cache-invalidation paths that rely on it (e.g. asset toggling).
 async function delPattern(pattern) {
   const redis = getClient();
-  if (!redis) return;
+  if (!redis) return memDelPattern(pattern);
   try {
     let cursor = '0';
     do {
