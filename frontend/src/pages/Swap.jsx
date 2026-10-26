@@ -3,6 +3,7 @@ import { ArrowUpDown, AlertTriangle, CheckCircle2, Settings } from 'lucide-react
 import { useTranslation } from 'react-i18next';
 import api from '../utils/api';
 import { createIdempotencyKey, postWithIdempotency } from '../utils/idempotency';
+import useStepUp from '../hooks/useStepUp';
 import toast from 'react-hot-toast';
 
 const REFRESH_INTERVAL = 15; // seconds
@@ -60,6 +61,7 @@ function getSavedSlippage() {
 }
 
 export default function Swap() {
+  const { requestStepUp, stepUpModal } = useStepUp();
   const { t } = useTranslation();
   const [sellAsset, setSellAsset] = useState('XLM');
   const [buyAsset, setBuyAsset] = useState('USDC');
@@ -207,6 +209,8 @@ export default function Swap() {
       return;
     }
     if (!confirmOpen) { setConfirmOpen(true); return; }
+    const stepUpToken = await requestStepUp();
+    if (!stepUpToken) return;
     setSubmitting(true);
     setResult(null);
     try {
@@ -219,6 +223,7 @@ export default function Swap() {
         min_received: minReceived || undefined,
       }, idemRef.current.get());
       idemRef.current.reset();
+      }, { headers: { 'X-Step-Up-Token': stepUpToken } });
       setResult(res.data);
       setSellAmount('');
       setQuote(null);
@@ -430,6 +435,7 @@ export default function Swap() {
           )}
         </div>
       )}
+      {stepUpModal}
     </div>
   );
 }
