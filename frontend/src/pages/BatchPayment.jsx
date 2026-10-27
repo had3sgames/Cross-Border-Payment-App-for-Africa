@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import api from '../utils/api';
+import { createIdempotencyKey, postWithIdempotency } from '../utils/idempotency';
 import { CURRENCIES, truncateAddress } from '../utils/currency';
 import { validateStellarAddress } from '../utils/validation';
 import useStepUp from '../hooks/useStepUp';
@@ -173,6 +174,46 @@ export default function BatchPayment() {
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState(null);
   const [rowStatuses, setRowStatuses] = useState({}); // { [index]: { status, error, txHash } }
+  const [polling, setPolling] = useState(false);
+  const stoppedRef = useRef(false);
+  const idemRef = useRef(createIdempotencyKey());
+
+  // Poll for per-row statuses after batch submission
+  useEffect(() => {
+    if (!polling || !batchId) return;
+    stoppedRef.current = false;
+
+    const pollOnce = async () => {
+      if (stoppedRef.current) return;
+      try {
+        const res = await api.get(`/payments/batch/${batchId}/status`);
+        const statuses = res.data.statuses || [];
+        setRowStatuses((prev) => {
+          const next = { ...prev };
+          statuses.forEach((s) => {
+            next[s.index] = { status: s.status, error: s.error, txHash: s.tx_hash };
+          });
+          return next;
+        });
+        const allTerminal =
+          statuses.length > 0 &&
+          statuses.every((s) => s.status === 'confirmed' || s.status === 'failed');
+        if (allTerminal) {
+          stoppedRef.current = true;
+          setPolling(false);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    pollOnce();
+    const interval = setInterval(pollOnce, 3000);
+    return () => {
+      stoppedRef.current = true;
+      clearInterval(interval);
+    };
+  }, [polling, batchId]);
 
   const batchSummary = useMemo(() => {
     const values = Object.values(rowStatuses);
@@ -345,9 +386,10 @@ export default function BatchPayment() {
         payload.memo_type = memoType;
       }
 
-      const response = await api.post('/payments/batch', payload, {
+      const response = await postWithIdempotency('/payments/batch', payload, idemRef.current.get(), {
         headers: { 'X-Step-Up-Token': stepUpToken },
       });
+      idemRef.current.reset();
       const data = response.data;
       setResults(data);
       toast.success(data.message || t('batch.submitted'));
@@ -358,6 +400,7 @@ export default function BatchPayment() {
       });
       setRowStatuses(initial);
     } catch (error) {
+      idemRef.current.resetUnlessLost(error);
       const responseData = error.response?.data;
       if (responseData?.results) {
         setResults(responseData);

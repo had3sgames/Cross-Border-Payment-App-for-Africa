@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { ArrowUpDown, AlertTriangle, CheckCircle2, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import api from '../utils/api';
+import { createIdempotencyKey, postWithIdempotency } from '../utils/idempotency';
 import useStepUp from '../hooks/useStepUp';
 import toast from 'react-hot-toast';
 
@@ -102,6 +103,7 @@ export default function Swap() {
 
   // Auto-refresh countdown (counts down from REFRESH_INTERVAL to 0)
   const [refreshCountdown, setRefreshCountdown] = useState(REFRESH_INTERVAL);
+  const idemRef = useRef(createIdempotencyKey());
   const prevMidPriceRef = useRef(null);
   const countdownRef = useRef(null);
   const refreshIntervalRef = useRef(null);
@@ -212,13 +214,15 @@ export default function Swap() {
     setSubmitting(true);
     setResult(null);
     try {
-      const res = await api.post('/dex/swap', {
+      const res = await postWithIdempotency('/dex/swap', {
         sell_asset: sellAsset,
         sell_amount: sellAmount.trim(),
         buy_asset: buyAsset,
         // Backend honours slippage_pct; min_received kept for BE-139 forward-compat.
         slippage_pct: slippage,
         min_received: minReceived || undefined,
+      }, idemRef.current.get());
+      idemRef.current.reset();
       }, { headers: { 'X-Step-Up-Token': stepUpToken } });
       setResult(res.data);
       setSellAmount('');
@@ -226,6 +230,7 @@ export default function Swap() {
       prevMidPriceRef.current = null;
       toast.success('Swap executed successfully');
     } catch (err) {
+      idemRef.current.resetUnlessLost(err);
       const errCode = err.response?.data?.code;
       if (errCode === 'PRICE_MOVED' || errCode === 'SLIPPAGE_EXCEEDED') {
         toast.error('Price moved too much. Increase your slippage tolerance and try again.');

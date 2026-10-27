@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { createIdempotencyKey, postWithIdempotency } from '../utils/idempotency';
 import useStepUp from '../hooks/useStepUp';
 import { useConfirm } from '../context/ConfirmContext';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 
 export default function Escrow() {
+  const createKeyRef = useRef(createIdempotencyKey());
   const { requestStepUp, stepUpModal } = useStepUp();
   const confirm = useConfirm();
   const { t } = useTranslation();
@@ -104,12 +106,15 @@ export default function Escrow() {
     if (!stepUpToken) return;
     setLoading(true);
     try {
+      const { data } = await postWithIdempotency('/escrow/create', createForm, createKeyRef.current.get());
+      createKeyRef.current.reset();
       const { data } = await api.post('/escrow/create', createForm, { headers: { 'X-Step-Up-Token': stepUpToken } });
       toast.success('Escrow created successfully');
       setCreateForm({ agent_wallet: '', recipient_wallet: '', amount: '', asset: 'USDC' });
       setActiveTab('list');
       fetchEscrows();
     } catch (err) {
+      createKeyRef.current.resetUnlessLost(err);
       toast.error(err.response?.data?.error || 'Failed to create escrow');
     } finally {
       setLoading(false);
